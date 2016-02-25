@@ -24,7 +24,7 @@ int main() {
 
   if (getcwd(filename, 1024) != NULL) {
     strcat(filename, "/");
-    strcat(filename, "fire.wav");
+    strcat(filename, "140.wav");
   }
 
   // open file
@@ -170,21 +170,21 @@ int main() {
       switch (wave->bits_per_sample) {
         case 8:
           low_limit = -128;
-          high_limit = 127;
-          break;
+              high_limit = 127;
+              break;
         case 16:
           low_limit = -32768;
-          high_limit = 32767;
-          break;
+              high_limit = 32767;
+              break;
         case 32:
           low_limit = -2147483648;
-          high_limit = 2147483647;
-          break;
+              high_limit = 2147483647;
+              break;
       }
 
 
       printf("\n.Valid range for data values : %ld to %ld \n", low_limit, high_limit);
-      printf("\n1");
+
       /***********************************************************************************/
       // Start computing bpm
       /***********************************************************************************/
@@ -201,16 +201,15 @@ int main() {
       int sub_band_size = 32;
       int num_steps = num_samples / step_size;
       float temp_data;
-      printf("2");
+
       float *data, *abs_buffer, *E_subband;
-      data = (float *) calloc(wave->channels, sizeof(float));
+      data = (float *) calloc(2, sizeof(float));
       abs_buffer = (float *) calloc(step_size, sizeof(float));
       E_subband = (float *) calloc(sub_band_size, sizeof(float));
-      printf("3");
 
       int current_bpm=0, average_bpm=0;
-      float current_beat=0.0, previous_beat=0.0;
-      printf("4");
+      float current_peak=0.0, previous_peak=0.0, front_peak=0.0, end_peak=0.0, transient_peak=0.0;
+      int start_peak=FALSE;
 
       // Allocate (sub_band_size) queues to hold 43 history energy values
       Queue * energy_history;
@@ -223,14 +222,13 @@ int main() {
         energy_history[i].rear = -1;
         energy_history[i].data = (float *) calloc(capacity, sizeof(float));
       }
-      printf("5");
 
       // Allocate FFT buffers
-      kiss_fft_cpx *fft_input_ch1, *fft_output_ch1;
+      kiss_fft_cpx *fft_input_ch1, *fft_input_ch2, *fft_output_ch1, *fft_output_ch2;
       fft_input_ch1 = (kiss_fft_cpx *) malloc(step_size * sizeof(kiss_fft_cpx));
-      //fft_input_ch2 = (kiss_fft_cpx *) malloc(step_size * sizeof(kiss_fft_cpx));
+      fft_input_ch2 = (kiss_fft_cpx *) malloc(step_size * sizeof(kiss_fft_cpx));
       fft_output_ch1 = (kiss_fft_cpx *) malloc(step_size * sizeof(kiss_fft_cpx));
-      //fft_output_ch2 = (kiss_fft_cpx *) malloc(step_size * sizeof(kiss_fft_cpx));
+      fft_output_ch2 = (kiss_fft_cpx *) malloc(step_size * sizeof(kiss_fft_cpx));
 
       for (i = 0; i < step_size; i++){
         fft_input_ch1[i].r = 0;
@@ -238,8 +236,7 @@ int main() {
         fft_output_ch1[i].r = 0;
         fft_output_ch1[i].i = 0;
       }
-      printf("6");
-      //
+
       kiss_fft_cfg fft_cfg_ch1 = kiss_fft_alloc(step_size, 0, NULL, NULL);
       kiss_fft_cfg fft_cfg_ch2 = kiss_fft_alloc(step_size, 0, NULL, NULL);
 
@@ -256,14 +253,14 @@ int main() {
                           (data_buffer[1] << 8) |
                           (data_buffer[2] << 16) |
                           (data_buffer[3] << 24);
-                break;
+                    break;
               case 2:
                 data[k] = data_buffer[0] |
                           (data_buffer[1] << 8);
-                break;
+                    break;
               case 1:
                 data[k] = data_buffer[0];
-                break;
+                    break;
             }
 
             // check if value was in range
@@ -276,58 +273,83 @@ int main() {
           // Initialize buffers
           fft_input_ch1[j].r = (kiss_fft_scalar) data[0];
           fft_input_ch1[j].i = (kiss_fft_scalar) data[1];
-          fft_output_ch1[j].r = 0;
-          fft_output_ch1[j].i = 0;
+          //fft_input_ch2[j].r = (kiss_fft_scalar) data[1];
+          //fft_input_ch2[j].i = 0.0;
+          fft_output_ch1[j].r = 0.0;
+          fft_output_ch1[j].i = 0.0;
+          fft_output_ch2[j].r = 0.0;
+          fft_output_ch2[j].i = 0.0;
 
           // Compute fft
           kiss_fft(fft_cfg_ch1, fft_input_ch1, fft_output_ch1);
+          //kiss_fft(fft_cfg_ch2, fft_input_ch2, fft_output_ch2);
 
           //printf("FFT R: %f, FFT I: %f\n", fft_output_ch1[j].r, fft_output_ch1[j].i);
 
           // Compute abs of FFTs
-          abs_buffer[j] = pow(pow(fft_output_ch1[j].r, 2) + pow(fft_output_ch1[j].i, 2), .5);
+          abs_buffer[j] = pow(fft_output_ch1[j].r, 2) + pow(fft_output_ch1[j].i, 2);
+          //abs_buffer[j] += pow(fft_output_ch2[j].r, 2) + pow(fft_output_ch2[j].i, 2);
           //printf("Abs: %f\n", abs_buffer[j]);
         }
 
-        temp_data = 0;
+
 
         // Compute subband energys
         for (j = 0; j < sub_band_size; j++) {
+          temp_data = 0;
           for (k = j*sub_band_size; k < (j+1)*sub_band_size; k++) {
             temp_data += abs_buffer[k];
             //printf("Tmp: %f\n", temp_data);
           }
 
-          E_subband[j] = sub_band_size*temp_data/step_size;
+          E_subband[j] = temp_data*sub_band_size/step_size;
           //printf("E: %f\n", E_subband[j]);
+
+          //printf("Subband: %f, Average: %f\n", E_subband[j], average_queue(energy_history[j]));
+
+          // Energy peak detected
+          if (E_subband[j] > 250*average_queue(energy_history[j])){
+            printf("!\n\n");
+            if (previous_peak != current_peak)
+              previous_peak = current_peak;
+            current_peak = (float)(i*step_size+j*sub_band_size)/wave->sample_rate;
+            //current_peak = floorf(current_peak*100)/100;
+            //printf("Beat at second %f\n", current_peak);
+
+            // Begin tracking of a transient peak.
+            // Take average of front and back when peak end detected.
+            if ((current_peak - previous_peak) > .3 && start_peak == FALSE) {
+              front_peak = current_peak;
+              start_peak = TRUE;
+            } else if ((current_peak - previous_peak) > .3 && start_peak == TRUE && previous_peak != 0){
+              end_peak = previous_peak;
+              transient_peak = (front_peak + end_peak)/2;
+              printf("%f\n", transient_peak);
+              start_peak = FALSE;
+            }
+
+            /*if (previous_beat != 0) {
+              current_bpm = 60*(current_peak - previous_peak);
+              if (40 < current_bpm && current_bpm < 200)
+                frequency_map[current_bpm] += 1;
+              //average_bpm = (average_bpm + current_bpm) / 2;
+            }*/
+            //printf("Current bpm %i\n", current_bpm);
+            //break;
+          }
 
           if (energy_history[j].size == energy_history[j].capacity)
             dequeue(energy_history, j);
           enqueue(energy_history, j, E_subband[j]);
-
-          //printf("Subband: %f, Average: %f\n", E_subband[j], average_queue(energy_history[j]));
-
-          if (E_subband[j] > 250*average_queue(energy_history[j])){
-            if (previous_beat != current_beat)
-              previous_beat = current_beat;
-            current_beat = (float)(i*step_size+j*sub_band_size)/wave->sample_rate;
-            current_beat = floorf(current_beat*10)/10;
-            //printf("Beat at second %f\n", current_beat);
-            if (previous_beat != 0) {
-              current_bpm = 60*(current_beat - previous_beat);
-              if (40 < current_bpm && current_bpm < 200)
-                frequency_map[current_bpm] += 1;
-              //average_bpm = (average_bpm + current_bpm) / 2;
-            }
-            //printf("Current bpm %i\n", current_bpm);
-            //break;
-          }
         }
-        bpm = most_frequent_bpm(frequency_map);
+        /*bpm = most_frequent_bpm(frequency_map);
         if (bpm != 0 && bpm != prev_bpm)
           printf("Current bpm is %i.\n", most_frequent_bpm(frequency_map));
-        prev_bpm = bpm;
+        prev_bpm = bpm;*/
+
       } // for (i=0; i<num_steps; i++) {
+
+      //dump_map(frequency_map);
 
       free(energy_history);
       free(data);
@@ -335,6 +357,8 @@ int main() {
       free(E_subband);
       free(fft_input_ch1);
       free(fft_output_ch1);
+      free(fft_input_ch2);
+      free(fft_output_ch2);
 
     } // if (size_is_correct) {
   } //  if (wave->format_type == 1) {
@@ -399,4 +423,11 @@ int most_frequent_bpm(int * map) {
       winner = i;
   }
   return winner;
+}
+
+void dump_map(int * map) {
+  int i;
+  for (i = 0; i < 200; i++)
+    printf("%i, %i\n", i, map[i]);
+  return;
 }

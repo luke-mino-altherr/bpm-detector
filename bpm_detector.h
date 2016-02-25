@@ -33,5 +33,6 @@ void dequeue(Queue * q, int index);
 void enqueue(Queue * q, int index, float element);
 float average_queue(Queue q);
 int most_frequent_bpm(int *);
+void dump_map(int *);
 
 #endif //BPMDETECTOR_BPM_DETECTOR_H
