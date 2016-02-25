@@ -1,7 +1,7 @@
 default: binary run
 
 binary:
-	g++ bpmDetector.c BeatDetektor.cpp kiss_fftr.c kiss_fft.c wave.c -o bpmDetector
+	g++ bpm_detector.c kiss_fft.c -o bpm_detector
 
 run:
-	./bpmDetector
+	./bpm_detector

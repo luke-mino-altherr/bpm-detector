@@ -64,8 +64,14 @@ int main()
   kiss_fft(fft_cfg_ch1, fft_input_ch1, fft_output_ch1);
   kiss_fft(fft_cfg_ch2, fft_input_ch2, fft_output_ch2);
 
-  // Print FFT data to file
-
+  // Write FFT data to file
+  FILE * pFile;
+  pFile = fopen("fft_ch1.dat", "wb");
+  fwrite ((float *) fft_output_ch1, sizeof(float), sizeof(fft_output_ch1), pFile);
+  fwrite ((float *) fft_output_ch2, sizeof(float), sizeof(fft_output_ch2), pFile);
+  fclose (pFile);
+  if (pFile)
+    free(pFile);
 
 /*
   printf("Plotting FFT");
