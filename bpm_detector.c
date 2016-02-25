@@ -24,7 +24,7 @@ int main() {
 
   if (getcwd(filename, 1024) != NULL) {
     strcat(filename, "/");
-    strcat(filename, "allthesmallthings.wav");
+    strcat(filename, "fire.wav");
   }
 
   // open file
@@ -199,16 +199,17 @@ int main() {
 
       int step_size = 1024;
       int sub_band_size = 32;
-      int num_steps = num_samples / 1024;
+      int num_steps = num_samples / step_size;
       float temp_data;
       printf("2");
       float *data, *abs_buffer, *E_subband;
-      data = (float *) calloc(2, sizeof(float));
+      data = (float *) calloc(wave->channels, sizeof(float));
       abs_buffer = (float *) calloc(step_size, sizeof(float));
       E_subband = (float *) calloc(sub_band_size, sizeof(float));
       printf("3");
 
-      int current_beat=0, previous_beat=0, current_bpm=0, average_bpm=0;
+      int current_bpm=0, average_bpm=0;
+      float current_beat=0.0, previous_beat=0.0;
       printf("4");
 
       // Allocate (sub_band_size) queues to hold 43 history energy values
@@ -292,12 +293,12 @@ int main() {
 
         // Compute subband energys
         for (j = 0; j < sub_band_size; j++) {
-          for (k = 0; k < sub_band_size; k++) {
-            temp_data += abs_buffer[j+k*sub_band_size];
+          for (k = j*sub_band_size; k < (j+1)*sub_band_size; k++) {
+            temp_data += abs_buffer[k];
             //printf("Tmp: %f\n", temp_data);
           }
 
-          E_subband[j] = 32*temp_data/1024;
+          E_subband[j] = sub_band_size*temp_data/step_size;
           //printf("E: %f\n", E_subband[j]);
 
           if (energy_history[j].size == energy_history[j].capacity)
@@ -306,18 +307,20 @@ int main() {
 
           //printf("Subband: %f, Average: %f\n", E_subband[j], average_queue(energy_history[j]));
 
-          if (E_subband[j] > 255*average_queue(energy_history[j])){
-            previous_beat = current_beat;
-            current_beat = i*step_size; // current beat at same i*1024
-            //printf("Beat at sample %i\n", current_beat);
+          if (E_subband[j] > 250*average_queue(energy_history[j])){
+            if (previous_beat != current_beat)
+              previous_beat = current_beat;
+            current_beat = (float)(i*step_size+j*sub_band_size)/wave->sample_rate;
+            current_beat = floorf(current_beat*10)/10;
+            //printf("Beat at second %f\n", current_beat);
             if (previous_beat != 0) {
-              current_bpm = .06 * (current_beat - previous_beat);
-              if (0 < current_bpm && current_bpm < 200)
+              current_bpm = 60*(current_beat - previous_beat);
+              if (40 < current_bpm && current_bpm < 200)
                 frequency_map[current_bpm] += 1;
               //average_bpm = (average_bpm + current_bpm) / 2;
             }
-            //printf("Current bpm %i, average bpm %i\n", current_bpm, average_bpm);
-            break;
+            //printf("Current bpm %i\n", current_bpm);
+            //break;
           }
         }
         bpm = most_frequent_bpm(frequency_map);
@@ -391,7 +394,7 @@ float average_queue(Queue q) {
 
 int most_frequent_bpm(int * map) {
   int i, winner=0;
-  for (i=0; i<200; i++) {
+  for (i=1; i<200; i++) {
     if (map[i] > winner)
       winner = i;
   }
