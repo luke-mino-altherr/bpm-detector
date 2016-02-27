@@ -211,7 +211,7 @@ int main(int argc, char ** argv) {
       frequency_map = (int *) calloc(200, sizeof(int));
 
       int step_size = 1024;
-      int sub_band_size = 32;
+      int sub_band_size = 64;
       int num_steps = num_samples / step_size;
       float temp_data;
 
@@ -260,7 +260,7 @@ int main(int argc, char ** argv) {
         // Read in data, compute FFT, and magnitude of fft
         for (j = 0; j < step_size; j++) {
           // Loop for left and right channels
-          for (k=0; k < 2; k++) {
+          for (k = 0; k < 2; k++) {
             read = fread(data_buffer, sizeof(data_buffer), 1, ptr);
 
             switch (bytes_in_each_channel) {
@@ -295,14 +295,16 @@ int main(int argc, char ** argv) {
           fft_output_ch1[j].i = 0.0;
           fft_output_ch2[j].r = 0.0;
           fft_output_ch2[j].i = 0.0;
+        }
 
-          // Compute FFT
-          kiss_fft(fft_cfg_ch1, fft_input_ch1, fft_output_ch1);
-          kiss_fft(fft_cfg_ch2, fft_input_ch2, fft_output_ch2);
+        // Once FFT buffer is completely filled, compute FFT
+        kiss_fft(fft_cfg_ch1, fft_input_ch1, fft_output_ch1);
+        kiss_fft(fft_cfg_ch2, fft_input_ch2, fft_output_ch2);
 
-          //printf("FFT R: %f, FFT I: %f\n", fft_output_ch1[j].r, fft_output_ch1[j].i);
+        //printf("FFT R: %f, FFT I: %f\n", fft_output_ch1[j].r, fft_output_ch1[j].i);
 
-          // Compute absolute value of FFT data and square it to get the energy.
+        // Compute absolute value of FFT data and square it to get the energy.
+        for (j = 0; j < step_size; j++) {
           abs_buffer[j] = pow(fft_output_ch1[j].r, 2) + pow(fft_output_ch1[j].i, 2);
           abs_buffer[j] += pow(fft_output_ch2[j].r, 2) + pow(fft_output_ch2[j].i, 2);
           //printf("Abs: %f, %i\n", abs_buffer[j], j);
@@ -313,34 +315,35 @@ int main(int argc, char ** argv) {
 
           // Compute the total amount of energy in a sub-band
           temp_data = 0;
-          for (k = j*sub_band_size; k < (j+1)*sub_band_size; k++) {
+          for (k = j * sub_band_size; k < (j + 1) * sub_band_size; k++) {
             temp_data += abs_buffer[k];
           }
 
           // Normalize the sub-band energy and store in the E_subband buffer
-          E_subband[j] = (temp_data/step_size) * sub_band_size;
+          E_subband[j] = (temp_data / sub_band_size);
 
           // Energy in band is well above the average of the past samples,
           // Consider the sample a transient peak
-          if (E_subband[j] > 250*average_queue(energy_history[j])){
+          if (E_subband[j] > 300 * average_queue(energy_history[j])) {
             previous_peak = current_peak;
             // Calculate sample number and divide by sample rate to get peak location in seconds.
-            current_peak = (float)(i*step_size+j*sub_band_size)/wave->sample_rate;
+            current_peak = (float) (i * step_size + j * sub_band_size) / wave->sample_rate;
+            //printf("%f\n", current_peak);
 
             // Be careful of peaks that are too close together,
             // Transients will last a certain number of samples.
             // Take average of the detected front and detected end of the peak.
-            if ((current_peak - previous_peak) > .05 && start_peak == FALSE) {
+            if ((current_peak - previous_peak) > .1 && start_peak == FALSE) {
               front_peak = current_peak;
               start_peak = TRUE;
-            } else if ((current_peak - previous_peak) > .05 && start_peak == TRUE && previous_peak != 0){
+            } else if ((current_peak - previous_peak) > .1 && start_peak == TRUE && previous_peak != 0) {
               prev_transient_peak = transient_peak;
               end_peak = previous_peak;
-              transient_peak = (front_peak + end_peak)/2;
+              transient_peak = (front_peak + end_peak) / 2;
 
               // Since peak location is in seconds, take inverse to get beats/sec
               // and multiply by 60 to get beats/min, or bpm.
-              current_bpm = (int)60/(transient_peak - prev_transient_peak);
+              current_bpm = (int) 60 / (transient_peak - prev_transient_peak);
 
               // Typically in modern music, bpm is between 71 and 200.
               if (current_bpm < 71) current_bpm *= 2;
@@ -366,7 +369,7 @@ int main(int argc, char ** argv) {
 
       } // for (i=0; i<num_steps; i++) {
 
-      //dump_map(frequency_map);
+      dump_map(frequency_map);
 
       free(energy_history);
       free(data);
@@ -431,6 +434,7 @@ float average_queue(Queue q) {
     if (i == q.rear)
       break;
     average += q.data[i];
+    printf("%f\n", q.data[i]);
     i++;
     if (i == q.capacity)
       i=0;
