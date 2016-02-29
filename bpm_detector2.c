@@ -1,4 +1,6 @@
 //
+// BPM Detector
+//
 // Created by Luke Mino-Altherr
 //
 #include <stdio.h>
@@ -6,7 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
-#include "kiss_fft.h"
+#include "kiss_fftr.h"
 #include "bpm_detector.h"
 #define TRUE 1
 #define FALSE 0
@@ -195,61 +197,77 @@ int main(int argc, char ** argv) {
                     break;
             }
 
-
             printf("\n.Valid range for data values : %ld to %ld \n", low_limit, high_limit);
 
             /***********************************************************************************/
-            // Start reading audio data and computing transient beats / bpm
+            // Start reading audio data and computing bpm
             /***********************************************************************************/
 
             unsigned int i = 0, j = 0, k = 0;
-            char *tem_data_buffer;
+
+            // Number of samples to analyze. We are taking 5 seconds of data.
+            unsigned int N = 4 * wave->sample_rate;
+            if (N % 2 != 0) N += 1;
+            int loops = floor(num_samples / N);
+
+            // Temporarily hold data from file
+            char *temp_data_buffer;
             temp_data_buffer = (char *) calloc(bytes_in_each_channel, sizeof(char));
 
             // Used to recursively call comb filter bpm detection
             float a, b, c, d;
 
-            int bpm_start = 60;
-            int bpm_end = 180;
-            int bpm_range = bpm_end - bpm_start;
+            int minbpm = 60;
+            int maxbpm = 180;
+            int bpm_range = maxbpm - minbpm;
+            float current_bpm = 0;
             int winning_bpm = 0;
 
-            int * frequency_map;
-            frequency_map = (int *) calloc(bpm_range, sizeof(int));
-
-            // Number of samples to analyze. We are taking 5 seconds of data.
-            int N = 5*wave->sample_rate;
-
-            double *abs_buffer_data, *abs_buffer_filter;
-            abs_buffer_data = (double *) calloc(N, sizeof(double));
-            abs_buffer_filter = (double *) calloc(N, sizeof(double));
+            int *frequency_map;
+            frequency_map = (int *) calloc(200, sizeof(int));
 
             // Allocate history buffer to hold energy values for each tested BPM
-            double *energy_history; double energy;
+            double *energy_history;
+            double energy;
             energy_history = (double *) calloc(bpm_range, sizeof(double));
 
             // Data buffer to read from file into
             kiss_fft_scalar *data;
             data = (kiss_fft_scalar *) calloc(2, sizeof(kiss_fft_scalar));
 
-            // Allocate FFT buffers
-            kiss_fft_cfg fft_cfg_data = kiss_fft_alloc(N, 0, NULL, NULL);
-            kiss_fft_cpx *fft_input_data, *fft_output_data;
-            fft_input_data = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
-            fft_output_data = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
+            // Allocate FFT buffers to read in data
+            kiss_fft_scalar *fft_input_ch1, *fft_input_ch2;
+            fft_input_ch1 = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+            fft_input_ch2 = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
 
-            // Initialize FFT buffers
-            for (i = 0; i < N; i++) {
-                fft_input_data[i].r = 0;
-                fft_input_data[i].i = 0;
-                fft_output_data[i].r = 0;
-                fft_output_data[i].i = 0;
+            // Split data of both channels into 6 different sub_bands
+            int num_sub_bands = 6;
+            unsigned int sub_band_size = N / num_sub_bands;
+            kiss_fft_scalar **sub_band_input_ch1, **sub_band_input_ch2, **sub_band_output_ch1, **sub_band_output_ch2;
+            sub_band_input_ch1 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
+            sub_band_input_ch2 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
+            sub_band_output_ch1 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
+            sub_band_output_ch2 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
+            for (i = 0; i < num_sub_bands; i++) {
+                sub_band_input_ch1[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+                sub_band_input_ch2[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+                sub_band_output_ch1[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+                sub_band_output_ch2[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+                for (k = 0; k < N; k++) {
+                    sub_band_input_ch1[i][k] = 0.0;
+                    sub_band_input_ch2[i][k] = 0.0;
+                    sub_band_output_ch1[i][k] = 0.0;
+                    sub_band_output_ch2[i][k] = 0.0;
+                }
             }
 
-            for (i = 0; i < floor(num_samples); i++) {
+
+            // Read in data from file to left and right channel buffers
+            for (j = 0; j < loops; j++) {
+                for (i = 0; i < N; i++) {
                     // Loop for left and right channels
                     for (k = 0; k < 2; k++) {
-                        read = fread(data_buffer, sizeof(data_buffer), 1, ptr);
+                        read = fread(temp_data_buffer, sizeof(temp_data_buffer), 1, ptr);
 
                         switch (bytes_in_each_channel) {
                             case 4:
@@ -272,55 +290,80 @@ int main(int argc, char ** argv) {
                             printf("**value out of range\n");
                     } // End reading in data for left and right channels
 
-                    //printf("Data L: %f, Data R: %f\n", data[0], data[1]);
+
 
                     // Set data to FFT buffers
-                    fft_input_data[j].r = (kiss_fft_scalar) data[0];
-                    fft_input_data[j].i = (kiss_fft_scalar) data[1];
+                    fft_input_ch1[i] = (kiss_fft_scalar) data[0];
+                    fft_input_ch2[i] = (kiss_fft_scalar) data[1];
                 }
 
-
-                fft_input_data = rectifier(fft_input_data, N);
-                fft_input_data = differentiator(fft_input_data, N);
-
-                kiss_fft(fft_cfg_data, fft_input_data, fft_output_data);
-                fft_output_data = hanning_window(fft_output_data, N, wave->sample_rate);
-
-                // Compute FFT
-
-                printf("Finsihed FFT\n");
-
-                // Compute absolute value of FFT data.
-                for (j = 0; j < N; j++) {
-                    abs_buffer_data[j] = pow(pow(fft_output_data[j].r, 2) + pow(fft_output_data[j].i, 2), .5);
+                // Populate sub-bands
+                for (i = 0; i < num_sub_bands; i++) {
+                    sub_band_input_ch1[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+                    sub_band_input_ch2[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+                    sub_band_output_ch1[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+                    sub_band_output_ch2[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+                    for (k = 0; k < N; k++) {
+                        sub_band_input_ch1[i][k] = 0.0;
+                        sub_band_input_ch2[i][k] = 0.0;
+                        sub_band_output_ch1[i][k] = 0.0;
+                        sub_band_output_ch2[i][k] = 0.0;
+                    }
+                    for (k = i * sub_band_size; k < (i + 1) * sub_band_size; k++) {
+                        sub_band_input_ch1[i][k] = fft_input_ch1[k];
+                        sub_band_input_ch2[i][k] = fft_input_ch2[k];
+                    }
                 }
 
-                a = comb_filter_convolution(abs_buffer_data, N, bpm_start, bpm_end, high_limit, wave->sample_rate, 1);
+                // Filter and compute bpm
+                for (i = 0; i < num_sub_bands; i++) {
+                    // Channel 1
+                    //sub_band_input_ch1[i] = hanning_window(sub_band_input_ch1[i], N, wave->sample_rate);
+                    sub_band_input_ch1[i] = differentiator(sub_band_input_ch1[i], N);
+                    sub_band_input_ch1[i] = rectifier(sub_band_input_ch1[i], N);
+                    current_bpm = comb_filter_convolution(sub_band_input_ch1[i], N, wave->sample_rate,
+                                                          1, minbpm, maxbpm, high_limit);
+                    if (current_bpm != -1) {
+                        //printf("BPM computation is: %f\n", current_bpm);
+                        frequency_map[(int) round(current_bpm)] += 1;
+                    }
 
-                /*b = comb_filter_convolution(abs_buffer_data, N, a - 20, a + 20, high_limit,
-                                            wave->sample_rate, .5);
-                printf("Second bpm computation is: %f\n", b);
-                c = comb_filter_convolution(abs_buffer_data, N, b - 5, b + 5, high_limit, wave->sample_rate, .1);
-                printf("Third bpm computation is: %f\n", c);
-                d = comb_filter_convolution(abs_buffer_data, N, c - 1, c + 1, high_limit, wave->sample_rate, .01);
-                printf("Fourth bpm computation is: %f\n", d);*/
+                    // Channel 2
+                    //sub_band_input_ch2[i] = hanning_window(sub_band_input_ch2[i], N, wave->sample_rate);
+                    sub_band_input_ch2[i] = differentiator(sub_band_input_ch2[i], N);
+                    sub_band_input_ch2[i] = rectifier(sub_band_input_ch2[i], N);
+                    current_bpm = comb_filter_convolution(sub_band_input_ch2[i], N, wave->sample_rate,
+                                                          1, minbpm, maxbpm, high_limit);
+                    if (current_bpm != -1) {
+                        //printf("BPM computation is: %f\n", current_bpm);
+                        frequency_map[(int) round(current_bpm)] += 1;
+                    }
 
-                if (a != -1) {
-                    printf("BPM computation is: %f\n", a);
-                    frequency_map[(int)round(a)] += 1;
+                    printf("Current BPM winner is: %i\n", most_frequent_bpm(frequency_map));
+
                 }
             }
 
-            printf("BPM winner is: %i\n", most_frequent_bpm(frequency_map));
+            winning_bpm = most_frequent_bpm(frequency_map);
+            printf("BPM winner is: %i\n", winning_bpm);
 
+            printf("\nDumping map...\n\n");
+            dump_map(frequency_map);
 
-            //dump_map(frequency_map);
+            for (i = 0; i < num_sub_bands; i++) {
+                free(sub_band_input_ch1[i]);
+                free(sub_band_input_ch2[i]);
+                free(sub_band_output_ch1[i]);
+                free(sub_band_output_ch2[i]);
+            }
+            free(sub_band_input_ch1);
+            free(sub_band_input_ch2);
+            free(sub_band_output_ch1);
+            free(sub_band_output_ch2);
+            free(fft_input_ch1);
+            free(fft_input_ch2);
+            free(temp_data_buffer);
             free(data);
-            free(abs_buffer_data);
-            free(abs_buffer_filter);
-            free(fft_input_data);
-            free(fft_output_data);
-
         } // if (size_is_correct) {
     } //  if (wave->format_type == 1) {
 
@@ -340,75 +383,79 @@ int main(int argc, char ** argv) {
 
 }
 
-kiss_fft_cpx * hanning_window(kiss_fft_cpx * input_buffer, unsigned int N, unsigned int sampling_rate) {
+kiss_fft_scalar * hanning_window(kiss_fft_scalar * data_in, unsigned int N, unsigned int sampling_rate) {
     /*
      * Implement a 200 ms half hanning window.
      *
      * Input is a signal in the frequency domain
      * Output is a windowed signal in the frequency domain.
      */
-    kiss_fft_cfg fft_cfg = kiss_fft_alloc(N, 0, NULL, NULL);
-    kiss_fft_cpx * hanning_in, *hanning_out;
-    hanning_in = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
+    kiss_fftr_cfg fft_window_cfg = kiss_fftr_alloc(N, 0, NULL, NULL);
+    kiss_fftr_cfg fft_data_cfg = kiss_fftr_alloc(N, 0, NULL, NULL);
+    kiss_fftr_cfg fft_data_inv_cfg = kiss_fftr_alloc(N, 1, NULL, NULL);
+    kiss_fft_scalar *hanning_in;
+    kiss_fft_cpx *hanning_out, *data_out;
+    hanning_in = (kiss_fft_scalar *) malloc(N*sizeof(kiss_fft_scalar));
     hanning_out = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
+    data_out = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
 
     int hann_len = .2*sampling_rate;
 
     int i;
     for (i = 0; i < N; i++) {
-        hanning_in[i].r = pow(cos(i*M_PI/hann_len/2),2);
-        hanning_in[i].i = 0;
-        hanning_out[i].r = 0;
-        hanning_out[i].i = 0;
+        hanning_in[i] = pow(cos(2*i*M_PI/hann_len), 2);
+        hanning_out[i].r = 0.0;
+        hanning_out[i].i = 0.0;
     }
 
-    kiss_fft(fft_cfg, hanning_in, hanning_out);
+    kiss_fftr(fft_window_cfg, hanning_in, hanning_out);
+    kiss_fftr(fft_data_cfg, data_in, data_out);
 
     for (i = 0; i < N; i++) {
-        input_buffer[i].r *= hanning_out[i].r;
-        input_buffer[i].i *= hanning_out[i].i;
+        data_out[i].r *= hanning_out[i].r;
+        data_out[i].i *= hanning_out[i].i;
     }
 
-    free (hanning_in); free(hanning_out);
+    kiss_fftri(fft_data_inv_cfg, data_out, data_in);
 
-    return input_buffer;
+    free(hanning_in);
+    free(hanning_out);
+    free(data_out);
+    kiss_fft_cleanup();
+
+    return data_in;
 }
 
-kiss_fft_cpx * rectifier(kiss_fft_cpx * input_buffer, unsigned int N) {
+kiss_fft_scalar * rectifier(kiss_fft_scalar * input_buffer, unsigned int N) {
     /*
      * Rectifies a signal in the time domain.
      */
     int i;
 
     for (i = 1; i < N; i++) {
-        if (input_buffer[i].r < 0)
-            input_buffer[i].r *= -1;
-        if (input_buffer[i].i < 0)
-            input_buffer[i].i *= -1;
+        if (input_buffer[i] < 0)
+            input_buffer[i] *= -1;
     }
 
     return input_buffer;
 }
 
-kiss_fft_cpx * differentiator(kiss_fft_cpx * input_buffer, unsigned int N) {
+kiss_fft_scalar * differentiator(kiss_fft_scalar * input_buffer, unsigned int N) {
     /*
      * Differentiates a signal in the time domain.
      */
-    kiss_fft_cpx * output;
-    output = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
+    kiss_fft_scalar * output;
+    output = (kiss_fft_scalar *) malloc(N*sizeof(kiss_fft_scalar));
 
     int i;
-    output[0].r = 0;
-    output[0].i = 0;
+    output[0] = 0;
 
     for (i = 1; i < N; i++) {
-        output[i].r = input_buffer[i].r - input_buffer[i-1].r;
-        output[i].i = input_buffer[i].i - input_buffer[i-1].i;
+        output[i] = input_buffer[i] - input_buffer[i-1];
     }
 
     for (i = 0; i < N; i++) {
-        input_buffer[i].r = output[i].r;
-        input_buffer[i].i = output[i].i;
+        input_buffer[i] = output[i];
     }
 
     free(output);
@@ -416,28 +463,33 @@ kiss_fft_cpx * differentiator(kiss_fft_cpx * input_buffer, unsigned int N) {
     return input_buffer;
 }
 
-double comb_filter_convolution(double * abs_buffer, unsigned int N, int minbpm, int maxbpm, int high_limit,
-                               unsigned int sample_rate, float resolution) {
+double comb_filter_convolution(kiss_fft_scalar * data_input,
+                               unsigned int N, unsigned int sample_rate, float resolution,
+                               int minbpm, int maxbpm, int high_limit) {
     /*
-     * Convolves the abs_buffer of size N with a impulse train
-     * for the bpm range, minbpm to maxbpm.
+     * Convolves the FFT of the data_input of size N with an impulse train
+     * with a periodicity relative to the bpm in the range of minbpm to maxbpm.
      *
-     * Returns bpm with the greatest measured energy/
+     * Returns bpm with the greatest measured energy
      */
-    kiss_fft_cfg fft_cfg_filter = kiss_fft_alloc(N, 0, NULL, NULL);
-    kiss_fft_cpx *fft_input_filter, *fft_output_filter;
-    fft_input_filter = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
-    fft_output_filter = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
+    kiss_fftr_cfg fft_cfg_filter = kiss_fftr_alloc(N, 0, NULL, NULL);
+    kiss_fftr_cfg fft_cfg_data = kiss_fftr_alloc(N, 0, NULL, NULL);
+
+    kiss_fft_scalar *filter_input, *filter_abs, *data_abs;
+    filter_input = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
+    filter_abs = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
+    data_abs = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
+
+    kiss_fft_cpx *filter_output, *data_output;
+    filter_output = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
+    data_output = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
 
     int index;
     float i, bpm;
     unsigned int j, ti;
     unsigned int bpm_range = maxbpm - minbpm;
-    double * energy, *abs_buffer_filter;
+    double * energy;
     energy = (double *) malloc(sizeof(double)*(bpm_range/resolution));
-    abs_buffer_filter = (double *) malloc(sizeof(double) * N);
-
-    printf("! ");
 
     for (i = 0; i < bpm_range; (i+=resolution)) {
 
@@ -448,45 +500,59 @@ double comb_filter_convolution(double * abs_buffer, unsigned int N, int minbpm, 
 
         for (j = 0; j < N; j++) {
             if (j%ti == 0) {
-                fft_input_filter[j].r = (kiss_fft_scalar) high_limit;
-                fft_input_filter[j].i = (kiss_fft_scalar) high_limit;
+                filter_input[j] = (kiss_fft_scalar) high_limit;
                 //printf("%f, %u, %u \n", i, j, ti);
             } else {
-                fft_input_filter[j].r = 0.0;
-                fft_input_filter[j].i = 0.0;
+                filter_input[j] = 0.0;
             }
         }
 
-        kiss_fft(fft_cfg_filter, fft_input_filter, fft_output_filter);
+        kiss_fftr(fft_cfg_filter, filter_input, filter_output);
+        kiss_fftr(fft_cfg_data, data_input, data_output);
+
+        filter_abs = absolute_value(filter_output, filter_abs, N);
+        data_abs = absolute_value(data_output, data_abs, N);
 
         index = i/resolution;
 
         energy[index] = 0.0;
 
-        for (j = 0; j < N; j++) {
-            abs_buffer_filter[j] = pow(pow(fft_output_filter[j].r, 2) + pow(fft_output_filter[j].i, 2), .5);
-            energy[index] += abs_buffer[j] * abs_buffer_filter[j];
+        for (j = 0; j < N/2; j++) {
+            energy[index] += filter_abs[j] * data_abs[j];
         }
 
         //printf("Energy of bpm %f is %f\n", (minbpm+i), energy[index]);
     }
 
-    bpm = (float)maxArray(energy, bpm_range/resolution);
+    bpm = (float)max_array(energy, bpm_range/resolution);
 
     if (bpm != -1) {
         bpm *= resolution;
         bpm += minbpm;
-    } else {
-        bpm = -1;
     }
 
-    free(energy); free(abs_buffer_filter);
-    free(fft_input_filter); free(fft_output_filter);
+    free(energy);
+    free(filter_input);
+    free(filter_output);
+    free(filter_abs);
+    free(data_output);
+    free(data_abs);
+    kiss_fft_cleanup();
 
     return bpm;
 }
 
-int maxArray(double * array, int size) {
+kiss_fft_scalar * absolute_value(kiss_fft_cpx * input, kiss_fft_scalar * output, unsigned int N) {
+    unsigned int i;
+
+    for (i = 0; i < N; i++) {
+        output[i] = pow(pow(input[i].r, 2) + pow(input[i].i ,2), .5);
+    }
+
+    return output;
+}
+
+int max_array(double * array, int size) {
     /*
      * Computes the max element of the array
      * and returns the corresponding index.
@@ -499,16 +565,26 @@ int maxArray(double * array, int size) {
             index = i;
         }
     }
-    printf("Max value at %i is %f\n", index, max);
+    //printf("Max value at %i is %f\n", index, max);
     if (max == 0.0) return -1;
     else return index;
 }
 
 int most_frequent_bpm(int * map) {
-    int i, winner=0;
+    int i, winner=0, value=0;
     for (i=0; i<200; i++) {
-        if (map[i] > winner)
+        if (map[i] > value) {
             winner = i;
+            value = map[winner];
+        }
     }
     return winner;
+}
+
+void dump_map(int * map) {
+    int i;
+    for (i = 0; i < 200; i++) {
+        printf("BPM: %i, Count: %i\n", i, map[i]);
+    }
+
 }
