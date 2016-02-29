@@ -320,7 +320,7 @@ int main(int argc, char ** argv) {
                     // Channel 1
                     //sub_band_input_ch1[i] = hanning_window(sub_band_input_ch1[i], N, wave->sample_rate);
                     sub_band_input_ch1[i] = differentiator(sub_band_input_ch1[i], N);
-                    sub_band_input_ch1[i] = rectifier(sub_band_input_ch1[i], N);
+                    sub_band_input_ch1[i] = half_wave_rectifier(sub_band_input_ch1[i], N);
                     current_bpm = comb_filter_convolution(sub_band_input_ch1[i], N, wave->sample_rate,
                                                           1, minbpm, maxbpm, high_limit);
                     if (current_bpm != -1) {
@@ -331,7 +331,7 @@ int main(int argc, char ** argv) {
                     // Channel 2
                     //sub_band_input_ch2[i] = hanning_window(sub_band_input_ch2[i], N, wave->sample_rate);
                     sub_band_input_ch2[i] = differentiator(sub_band_input_ch2[i], N);
-                    sub_band_input_ch2[i] = rectifier(sub_band_input_ch2[i], N);
+                    sub_band_input_ch2[i] = half_wave_rectifier(sub_band_input_ch2[i], N);
                     current_bpm = comb_filter_convolution(sub_band_input_ch2[i], N, wave->sample_rate,
                                                           1, minbpm, maxbpm, high_limit);
                     if (current_bpm != -1) {
@@ -399,6 +399,8 @@ kiss_fft_scalar * hanning_window(kiss_fft_scalar * data_in, unsigned int N, unsi
     hanning_out = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
     data_out = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
 
+    data_in = full_wave_rectifier(data, N);
+
     int hann_len = .2*sampling_rate;
 
     int i;
@@ -426,7 +428,7 @@ kiss_fft_scalar * hanning_window(kiss_fft_scalar * data_in, unsigned int N, unsi
     return data_in;
 }
 
-kiss_fft_scalar * rectifier(kiss_fft_scalar * input_buffer, unsigned int N) {
+kiss_fft_scalar * full_wave_rectifier(kiss_fft_scalar * input_buffer, unsigned int N) {
     /*
      * Rectifies a signal in the time domain.
      */
@@ -435,6 +437,20 @@ kiss_fft_scalar * rectifier(kiss_fft_scalar * input_buffer, unsigned int N) {
     for (i = 1; i < N; i++) {
         if (input_buffer[i] < 0)
             input_buffer[i] *= -1;
+    }
+
+    return input_buffer;
+}
+
+kiss_fft_scalar * half_wave_rectifier(kiss_fft_scalar * input_buffer, unsigned int N) {
+    /*
+     * Rectifies a signal in the time domain.
+     */
+    int i;
+
+    for (i = 1; i < N; i++) {
+        if (input_buffer[i] < 0)
+            input_buffer[i] = 0;
     }
 
     return input_buffer;
@@ -479,6 +495,7 @@ double comb_filter_convolution(kiss_fft_scalar * data_input,
     filter_input = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
     filter_abs = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
     data_abs = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
+    data_abs = absolute_value(data_output, data_abs, N);
 
     kiss_fft_cpx *filter_output, *data_output;
     filter_output = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
@@ -511,7 +528,6 @@ double comb_filter_convolution(kiss_fft_scalar * data_input,
         kiss_fftr(fft_cfg_data, data_input, data_output);
 
         filter_abs = absolute_value(filter_output, filter_abs, N);
-        data_abs = absolute_value(data_output, data_abs, N);
 
         index = i/resolution;
 
