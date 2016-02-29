@@ -2,17 +2,17 @@
 
 `bpm-detector` calculates the beats per minute of an audio file.
 
- ## Building and running bpm-detector
+## Building and running bpm-detector
 
- To compile the project into a binary, call the following command in the working directory of the project:
+To compile the project into a binary, call the following command in the working directory of the project:
 
- $ make binary
+$ make binary
 
- This will create a binary file called `bpm-detector`. This program expects the relative path of a stereo audio file in the `wav` format; therefore, the audio file you want to test should be copied to the project directory. For instance, if you wanted to calculate the bpm for a file called `test.wav`, you would call the following:
+This will create a binary file called `bpm-detector`. This program expects the relative path of a stereo audio file in the `wav` format; therefore, the audio file you want to test should be copied to the project directory. For instance, if you wanted to calculate the bpm for a file called `test.wav`, you would call the following:
 
- $ ./bpm-detector test.wav
+$ ./bpm-detector test.wav
 
- ## How it works
+## How it works
 
 The algorithm used to calculate the bpm is based largely on Eric D. Scheirer's paper, [Tempo and beat analysis of acoustic musical signals](http://www.iro.umontreal.ca/~pift6080/H09/documents/papers/scheirer_jasa.pdf), and the project called [Beat This](https://www.clear.rice.edu/elec301/Projects01/beat_sync/index.html) by Kileen Cheng, Bobak Nazer, Jyoti Uppuluri, and Ryan Verret.
 
