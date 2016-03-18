@@ -4,4 +4,4 @@ binary:
 	g++ bpm_detector.c kiss_fft.c kiss_fftr.c -o bpm-detector
 
 run:
-	./bpm-detector fire.wav
+	./bpm-detector some_chords.wav
