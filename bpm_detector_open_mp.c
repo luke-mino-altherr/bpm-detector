@@ -19,6 +19,14 @@ unsigned char buffer2[2];
 
 FILE *ptr;
 
+char *temp_data_buffer;
+double *energy;
+kiss_fft_scalar *data;
+kiss_fft_scalar **sub_band_input_ch1, **sub_band_input_ch2;
+kiss_fft_scalar *fft_input_ch1, *fft_input_ch2;
+
+#pragma omp threadprivate(temp_data_buffer, energy, data, sub_band_input_ch1, sub_band_input_ch2, fft_input_ch1, fft_input_ch2)
+
 int main(int argc, char ** argv) {
     //Start timing code
     clock_t start, end;
@@ -222,45 +230,44 @@ int main(int argc, char ** argv) {
             int *frequency_map;
             frequency_map = (int *) calloc(200, sizeof(int));
 
-#pragma omp parallel private(i, k, current_bpm)
+            int num_sub_bands = 6;
+            unsigned int sub_band_size = N / num_sub_bands;
+
+	    omp_set_num_threads(loops/2);
+
+            #pragma omp parallel private(i, k, current_bpm)
             {
 
-                // Temporarily hold data from file
-                char *temp_data_buffer;
-                temp_data_buffer = (char *) malloc(bytes_in_each_channel * sizeof(char));
+                #pragma omp critical
+                {
+                    // Temporarily hold data from file
+                    temp_data_buffer = (char *) malloc(bytes_in_each_channel * sizeof(char));
 
-                // Allocate history buffer to hold energy values for each tested BPM
-                double *energy;
-                energy = (double *) malloc(sizeof(double) * (bpm_range / resolution));
+                    // Allocate history buffer to hold energy values for each tested BPM
+                    energy = (double *) malloc(sizeof(double) * (bpm_range / resolution));
 
-                // Data buffer to read from file into
-                kiss_fft_scalar *data;
-                data = (kiss_fft_scalar *) calloc(2, sizeof(kiss_fft_scalar));
+                    // Data buffer to read from file into
+                    data = (kiss_fft_scalar *) malloc(2 * sizeof(kiss_fft_scalar));
 
-                // Allocate FFT buffers to read in data
-                kiss_fft_scalar *fft_input_ch1, *fft_input_ch2;
-                fft_input_ch1 = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-                fft_input_ch2 = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+                    // Allocate FFT buffers to read in data
+                    fft_input_ch1 = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+                    fft_input_ch2 = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
 
-                // Allocate subband buffers
-                int num_sub_bands = 6;
-                unsigned int sub_band_size = N / num_sub_bands;
-                kiss_fft_scalar **sub_band_input_ch1, **sub_band_input_ch2;
-                sub_band_input_ch1 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-                sub_band_input_ch2 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-                for (i = 0; i < num_sub_bands; i++) {
-                    sub_band_input_ch1[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-                    sub_band_input_ch2[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-                    for (k = 0; k < N; k++) {
-                        sub_band_input_ch1[i][k] = 0.0;
-                        sub_band_input_ch2[i][k] = 0.0;
+                    // Allocate subband buffers
+                    sub_band_input_ch1 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
+                    sub_band_input_ch2 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
+                    for (i = 0; i < num_sub_bands; i++) {
+                        sub_band_input_ch1[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+                        sub_band_input_ch2[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+                        for (k = 0; k < N; k++) {
+                            sub_band_input_ch1[i][k] = 0.0;
+                            sub_band_input_ch2[i][k] = 0.0;
+                        }
                     }
                 }
 
-#pragma omp for private(i, k, current_bpm, temp_data_buffer, energy, data, fft_input_ch1, fft_input_ch2,sub_band_input_ch1, sub_band_input_ch2)
+                #pragma omp for
                 for (j = 0; j < loops; j++) {
-#pragma omp single
-                    {
                         // Read in data from file to left and right channel buffers
                         for (i = 0; i < N; i++) {
                             // Loop for left and right channels
@@ -292,7 +299,6 @@ int main(int argc, char ** argv) {
                             fft_input_ch1[i] = (kiss_fft_scalar) data[0];
                             fft_input_ch2[i] = (kiss_fft_scalar) data[1];
                         } // End read in data
-                    }
 
                     // Split data into separate frequency bands
                     sub_band_input_ch1 = filterbank(fft_input_ch1, sub_band_input_ch1, N, wave->sample_rate);
@@ -325,6 +331,7 @@ int main(int argc, char ** argv) {
 
                     if (current_bpm != -1) {
                         printf("BPM computation is: %f\n", current_bpm);
+			#pragma omp atomic
                         frequency_map[(int) round(current_bpm)] += 1;
                     }
 
@@ -376,11 +383,24 @@ kiss_fft_scalar ** filterbank(kiss_fft_scalar * time_data_in, kiss_fft_scalar **
      *
      * Output a vector of 6 time domain arrays of size N
      */
-    // Initialize array of bandlimits
+    // Initialize FFT buffers and array for the filterbank
+    kiss_fft_cpx *freq_data_in, *freq_data_out;
     int * bandlimits, *bandleft, *bandright;
-    bandleft = (int *) malloc(sizeof(int) * 6);
-    bandright = (int *) malloc(sizeof(int) * 6);
-    bandlimits = (int *) malloc(sizeof(int) * 6);
+    kiss_fftr_cfg fft_cfg, fft_inv_cfg;
+
+    #pragma omp critical
+    {
+        fft_cfg = kiss_fftr_alloc(N, 0, NULL, NULL);
+        fft_inv_cfg = kiss_fftr_alloc(N, 1, NULL, NULL);
+        freq_data_in = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
+        freq_data_out = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
+
+        bandleft = (int *) malloc(sizeof(int) * 6);
+        bandright = (int *) malloc(sizeof(int) * 6);
+        bandlimits = (int *) malloc(sizeof(int) * 6);
+    }
+
+    // Initialize array of bandlimits
     bandlimits[0] = 3;
     bandlimits[1] = 200;
     bandlimits[2] = 400;
@@ -398,12 +418,6 @@ kiss_fft_scalar ** filterbank(kiss_fft_scalar * time_data_in, kiss_fft_scalar **
     bandleft[5] = floor(bandlimits[5]/maxfreq*N/2)+1;
     bandright[5] = floor(N/2);
 
-    // Initialize FFT buffers
-    kiss_fftr_cfg fft_cfg = kiss_fftr_alloc(N, 0, NULL, NULL);
-    kiss_fftr_cfg fft_inv_cfg = kiss_fftr_alloc(N, 1, NULL, NULL);
-    kiss_fft_cpx *freq_data_in, *freq_data_out;
-    freq_data_in = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
-    freq_data_out = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
 
     // Take FFT of input time domain data
     kiss_fftr(fft_cfg, time_data_in, freq_data_in);
@@ -442,14 +456,20 @@ kiss_fft_scalar * hanning_window(kiss_fft_scalar * data_in, unsigned int N, unsi
      * Input is a signal in the frequency domain
      * Output is a windowed signal in the frequency domain.
      */
-    kiss_fftr_cfg fft_window_cfg = kiss_fftr_alloc(N, 0, NULL, NULL);
-    kiss_fftr_cfg fft_data_cfg = kiss_fftr_alloc(N, 0, NULL, NULL);
-    kiss_fftr_cfg fft_data_inv_cfg = kiss_fftr_alloc(N, 1, NULL, NULL);
     kiss_fft_scalar *hanning_in;
     kiss_fft_cpx *hanning_out, *data_out;
-    hanning_in = (kiss_fft_scalar *) malloc(N*sizeof(kiss_fft_scalar));
-    hanning_out = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
-    data_out = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
+    kiss_fftr_cfg fft_window_cfg, fft_data_cfg, fft_data_inv_cfg;
+
+    #pragma omp critical
+    {
+        hanning_in = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+        hanning_out = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
+        data_out = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
+
+        fft_window_cfg = kiss_fftr_alloc(N, 0, NULL, NULL);
+        fft_data_cfg = kiss_fftr_alloc(N, 0, NULL, NULL);
+        fft_data_inv_cfg = kiss_fftr_alloc(N, 1, NULL, NULL);
+    }
 
     int hann_len = .2*sampling_rate;
 
@@ -514,8 +534,11 @@ kiss_fft_scalar * differentiator(kiss_fft_scalar * input_buffer, unsigned int N)
      * Differentiates a signal in the time domain.
      */
     kiss_fft_scalar * output;
-    output = (kiss_fft_scalar *) malloc(N*sizeof(kiss_fft_scalar));
 
+    #pragma omp critical
+    {
+        output = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+    }
     int i;
     output[0] = 0;
 
@@ -541,17 +564,23 @@ double * comb_filter_convolution(kiss_fft_scalar * data_input, double * energy,
      *
      * Returns energy array
      */
-    kiss_fftr_cfg fft_cfg_filter = kiss_fftr_alloc(N, 0, NULL, NULL);
-    kiss_fftr_cfg fft_cfg_data = kiss_fftr_alloc(N, 0, NULL, NULL);
-
     kiss_fft_scalar *filter_input, *filter_abs, *data_abs;
-    filter_input = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
-    filter_abs = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
-    data_abs = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
-
     kiss_fft_cpx *filter_output, *data_output;
-    filter_output = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
-    data_output = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
+    kiss_fftr_cfg fft_cfg_filter, fft_cfg_data;
+
+    #pragma omp critical
+    {
+        filter_input = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
+        filter_abs = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
+        data_abs = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
+
+
+        filter_output = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
+        data_output = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
+
+        fft_cfg_filter = kiss_fftr_alloc(N, 0, NULL, NULL);
+        fft_cfg_data = kiss_fftr_alloc(N, 0, NULL, NULL);
+    }
 
     kiss_fftr(fft_cfg_data, data_input, data_output);
     data_abs = absolute_value(data_output, data_abs, N);
