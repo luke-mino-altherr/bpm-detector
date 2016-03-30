@@ -27,6 +27,14 @@ int main(int argc, char ** argv) {
     char processor_name[MPI_MAX_PROCESSOR_NAME];
     MPI_Status status;
 
+    MPI_Datatype WaveType;
+    MPI_Datatype type[13] = { MPI_UNSIGNED_CHAR, MPI_UNSIGNED_INT, MPI_UNSIGNED_CHAR, MPI_UNSIGNED_CHAR,
+                              MPI_UNSIGNED_INT, MPI_UNSIGNED_INT, MPI_UNSIGNED_INT, MPI_UNSIGNED_INT,
+                              MPI_UNSIGNED_INT, MPI_UNSIGNED_INT, MPI_UNSIGNED_INT, MPI_UNSIGNED_CHAR,
+                              MPI_UNSIGNED_INT};
+    int blocklen[13] = { 4, 1, 4, 4, 1, 1, 1, 1, 1, 1, 1, 4, 1};
+    MPI_Aint disp[14];
+
     // Initialize MPI environment
     MPI_Init(&argc, &argv);
     MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
@@ -40,151 +48,141 @@ int main(int argc, char ** argv) {
     if (argc != 2) /* argc should be 2 for correct execution */
     {
         printf("usage: %s relative filename", argv[0]);
+        MPI_Finalize();
         return -1;
-    }
-
-    char *filename = NULL;
-    filename = (char *) malloc(1024 * sizeof(char));
-
-    if (getcwd(filename, 1024) != NULL) {
-        strcat(filename, "/");
-        strcat(filename, argv[1]);
-    }
-
-    // open file
-    printf("Opening file %s...\n", filename);
-    ptr = fopen(filename, "r");
-    if (ptr == NULL) {
-        printf("Error opening file\n");
-        exit(1);
     }
 
     /***********************************************************************************/
     // Read in the header data to get the basic attributes of the file.
     /***********************************************************************************/
-
-    int read = 0;
     WAVE *wave;
     wave = (WAVE *) malloc(sizeof(WAVE));
 
-    // Read in WAVE attributes
-    read = fread(wave->riff, sizeof(wave->riff), 1, ptr);
-    printf("(1-4): %s \n", wave->riff);
+    disp[0] = &(wave->riff) - wave;
+    disp[1] = &(wave->overall_size) - wave;
+    disp[2] = &(wave->wave) - wave;
+    disp[3] = &(wave->fmt_chunk_marker) - wave;
+    disp[4] = &(wave->length_of_fmt) - wave;
+    disp[5] = &(wave->format_type) - wave;
+    disp[6] = &(wave->channels) - wave;
+    disp[7] = &(wave->sample_rate) - wave;
+    disp[8] = &(wave->byterate) - wave;
+    disp[9] = &(wave->block_align) - wave;
+    disp[10] = &(wave->bits_per_sample) - wave;
+    disp[11] = &(wave->data_chunk_header) - wave;
+    disp[12] = &(wave->data_size) - wave;
+    MPI_Type_create_struct(3, blocklen, disp, type, &WaveType);
+    MPI_Type_commit(&WaveType);
 
-    read = fread(buffer4, sizeof(buffer4), 1, ptr);
-    //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
+    if (rank == 0) {
+        char *filename = NULL;
+        filename = (char *) malloc(1024 * sizeof(char));
 
-    // convert little endian to big endian 4 byte int
-    wave->overall_size = buffer4[0] |
+        if (getcwd(filename, 1024) != NULL) {
+            strcat(filename, "/");
+            strcat(filename, argv[1]);
+        }
+
+        // open file
+        ptr = fopen(filename, "r");
+        if (ptr == NULL) {
+            printf("Error opening file\n");
+            return -1;
+        }
+
+        // Read in WAVE attributes
+        int read;
+        read = fread(wave->riff, sizeof(wave->riff), 1, ptr);
+
+        read = fread(buffer4, sizeof(buffer4), 1, ptr);
+
+        // convert little endian to big endian 4 byte int
+        wave->overall_size = buffer4[0] |
+                             (buffer4[1] << 8) |
+                             (buffer4[2] << 16) |
+                             (buffer4[3] << 24);
+
+        read = fread(wave->wave, sizeof(wave->wave), 1, ptr);
+
+        read = fread(wave->fmt_chunk_marker, sizeof(wave->fmt_chunk_marker), 1, ptr);
+
+        read = fread(buffer4, sizeof(buffer4), 1, ptr);
+
+        // convert little endian to big endian 4 byte integer
+        wave->length_of_fmt = buffer4[0] |
+                              (buffer4[1] << 8) |
+                              (buffer4[2] << 16) |
+                              (buffer4[3] << 24);
+
+
+        read = fread(buffer2, sizeof(buffer2), 1, ptr);
+
+        wave->format_type = buffer2[0] | (buffer2[1] << 8);
+        char format_name[10] = "";
+        if (wave->format_type == 1)
+            strcpy(format_name, "PCM");
+        else if (wave->format_type == 6)
+            strcpy(format_name, "A-law");
+        else if (wave->format_type == 7)
+            strcpy(format_name, "Mu-law");
+
+        read = fread(buffer2, sizeof(buffer2), 1, ptr);
+
+        wave->channels = buffer2[0] | (buffer2[1] << 8);
+        if (wave->channels != 2) {
+            printf("Expected a stereo audio file. Exiting.");
+            exit(1);
+        }
+
+        read = fread(buffer4, sizeof(buffer4), 1, ptr);
+
+        wave->sample_rate = buffer4[0] |
+                            (buffer4[1] << 8) |
+                            (buffer4[2] << 16) |
+                            (buffer4[3] << 24);
+
+        read = fread(buffer4, sizeof(buffer4), 1, ptr);
+
+        wave->byterate = buffer4[0] |
                          (buffer4[1] << 8) |
                          (buffer4[2] << 16) |
                          (buffer4[3] << 24);
 
-    printf("(5-8) Overall size: bytes:%u, Kb:%u \n", wave->overall_size, wave->overall_size / 1024);
+        read = fread(buffer2, sizeof(buffer2), 1, ptr);
 
-    read = fread(wave->wave, sizeof(wave->wave), 1, ptr);
-    printf("(9-12) Wave marker: %s\n", wave->wave);
+        wave->block_align = buffer2[0] |
+                            (buffer2[1] << 8);
 
-    read = fread(wave->fmt_chunk_marker, sizeof(wave->fmt_chunk_marker), 1, ptr);
-    printf("(13-16) Fmt marker: %s\n", wave->fmt_chunk_marker);
+        read = fread(buffer2, sizeof(buffer2), 1, ptr);
 
-    read = fread(buffer4, sizeof(buffer4), 1, ptr);
-    //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
+        wave->bits_per_sample = buffer2[0] |
+                                (buffer2[1] << 8);
 
-    // convert little endian to big endian 4 byte integer
-    wave->length_of_fmt = buffer4[0] |
+        read = fread(wave->data_chunk_header, sizeof(wave->data_chunk_header), 1, ptr);
+
+        read = fread(buffer4, sizeof(buffer4), 1, ptr);
+
+        wave->data_size = buffer4[0] |
                           (buffer4[1] << 8) |
                           (buffer4[2] << 16) |
                           (buffer4[3] << 24);
-    printf("(17-20) Length of Fmt wave: %u \n", wave->length_of_fmt);
-
-    read = fread(buffer2, sizeof(buffer2), 1, ptr);
-    //printf("%u %u \n", buffer2[0], buffer2[1]);
-
-    wave->format_type = buffer2[0] | (buffer2[1] << 8);
-    char format_name[10] = "";
-    if (wave->format_type == 1)
-        strcpy(format_name, "PCM");
-    else if (wave->format_type == 6)
-        strcpy(format_name, "A-law");
-    else if (wave->format_type == 7)
-        strcpy(format_name, "Mu-law");
-
-    printf("(21-22) Format type: %u %s \n", wave->format_type, format_name);
-
-    read = fread(buffer2, sizeof(buffer2), 1, ptr);
-    //printf("%u %u \n", buffer2[0], buffer2[1]);
-
-    wave->channels = buffer2[0] | (buffer2[1] << 8);
-    printf("(23-24) Channels: %u \n", wave->channels);
-    if (wave->channels != 2) {
-        printf("Assumed there would be two channels. Exiting.");
-        exit(1);
     }
 
-    read = fread(buffer4, sizeof(buffer4), 1, ptr);
-    //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
-
-    wave->sample_rate = buffer4[0] |
-                        (buffer4[1] << 8) |
-                        (buffer4[2] << 16) |
-                        (buffer4[3] << 24);
-
-    printf("(25-28) Sample rate: %u\n", wave->sample_rate);
-
-    read = fread(buffer4, sizeof(buffer4), 1, ptr);
-    //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
-
-    wave->byterate = buffer4[0] |
-                     (buffer4[1] << 8) |
-                     (buffer4[2] << 16) |
-                     (buffer4[3] << 24);
-    printf("(29-32) Byte Rate: %u , Bit Rate:%u\n", wave->byterate, wave->byterate * 8);
-
-    read = fread(buffer2, sizeof(buffer2), 1, ptr);
-    //printf("%u %u \n", buffer2[0], buffer2[1]);
-
-    wave->block_align = buffer2[0] |
-                        (buffer2[1] << 8);
-    printf("(33-34) Block Alignment: %u \n", wave->block_align);
-
-    read = fread(buffer2, sizeof(buffer2), 1, ptr);
-    //printf("%u %u \n", buffer2[0], buffer2[1]);
-
-    wave->bits_per_sample = buffer2[0] |
-                            (buffer2[1] << 8);
-    printf("(35-36) Bits per sample: %u \n", wave->bits_per_sample);
-
-    read = fread(wave->data_chunk_header, sizeof(wave->data_chunk_header), 1, ptr);
-    printf("(37-40) Data Marker: %s \n", wave->data_chunk_header);
-
-    read = fread(buffer4, sizeof(buffer4), 1, ptr);
-    //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
-
-    wave->data_size = buffer4[0] |
-                      (buffer4[1] << 8) |
-                      (buffer4[2] << 16) |
-                      (buffer4[3] << 24);
-    printf("(41-44) Size of data chunk: %u \n", wave->data_size);
+    MPI_Bcast(wave, 1, WaveType, 0, MPI_COMM_WORLD);
 
     long size_of_each_sample = (wave->channels * wave->bits_per_sample) / 8;
-    printf("Size of each sample:%ld bytes\n", size_of_each_sample);
 
     long num_samples = (wave->data_size) / (size_of_each_sample);
-    printf("Number of samples:%lu \n", num_samples);
 
     // calculate duration of file
     float duration_in_seconds = (float) wave->overall_size / wave->byterate;
-    printf("Approx.Duration in seconds=%f\n", duration_in_seconds);
-    //printf("Approx.Duration in h:m:s=%s\n", seconds_to_time(duration_in_seconds));
-
 
     // read each sample from data chunk if PCM
     if (wave->format_type != 1) {
         printf("Data must be in PCM format");
+        MPI_Finalize();
         return -1;
     }
-
 
     int size_is_correct = TRUE;
 
@@ -197,6 +195,7 @@ int main(int argc, char ** argv) {
 
     if (!size_is_correct) {
         printf("Size is incorrect. Exiting.");
+        MPI_Finalize();
         return -1;
     }
 
@@ -219,8 +218,6 @@ int main(int argc, char ** argv) {
             break;
     }
 
-    printf("\n.Valid range for data values : %ld to %ld \n", low_limit, high_limit);
-
     /***********************************************************************************/
     // Starting BPM Computation
     /***********************************************************************************/
@@ -231,7 +228,6 @@ int main(int argc, char ** argv) {
     unsigned int N = 4 * wave->sample_rate;
     if (N % 2 != 0) N += 1;
     int loops = floor(num_samples / N);
-    printf("loops is %i\n", loops);
 
     int minbpm = 60;
     int maxbpm = 180;
@@ -314,14 +310,13 @@ int main(int argc, char ** argv) {
 
             free(frequency_map);
 
-
             break;
         case 1:
             kiss_fft_scalar *fft_input_ch1_1;
             fft_input_ch1_1 = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
 
             kiss_fft_scalar **sub_band_input_ch1_1;
-            sub_band_input_ch1 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
+            sub_band_input_ch1_1 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
             for (i = 0; i < num_sub_bands; i++) {
                 sub_band_input_ch1_1[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
                 for (k = 0; k < N; k++) {
@@ -341,7 +336,6 @@ int main(int argc, char ** argv) {
                 free(sub_band_input_ch1_1[i]);
             }
             free(sub_band_input_ch1_1);
-
 
             break;
         case 2:
@@ -604,8 +598,9 @@ int main(int argc, char ** argv) {
             energy_ch1 = (double *) malloc(sizeof(double)*(bpm_range/resolution));
             energy_ch2 = (double *) malloc(sizeof(double)*(bpm_range/resolution));
 
-            int *frequency_map;
-            frequency_map = (int *) calloc(200, sizeof(int));
+
+            int *frequency_map_13;
+            frequency_map_13 = (int *) calloc(200, sizeof(int));
 
             for (j = 0; j < loops; j++) {
                 MPI_Recv(energy_ch1, 1, MPI_FLOAT, 11, 13, MPI_COMM_WORLD, &status);
@@ -615,27 +610,57 @@ int main(int argc, char ** argv) {
                 }
 
                 // Calculate the bpm from the total energy
-                current_bpm = compute_bpm(energy, bpm_range, minbpm, resolution);
+                current_bpm = compute_bpm(energy_ch1, bpm_range, minbpm, resolution);
 
                 if (current_bpm != -1) {
                     printf("BPM computation is: %f\n", current_bpm);
-                    frequency_map[(int) round(current_bpm)] += 1;
+                    frequency_map_13[(int) round(current_bpm)] += 1;
                 }
 
                 printf("Current BPM winner is: %i\n", most_frequent_bpm(frequency_map));
             }
 
-            MPI_Send(frequency_map,  1, MPI_INT, 0, 15, MPI_COMM_WORLD);
+            MPI_Send(frequency_map_13,  1, MPI_INT, 0, 15, MPI_COMM_WORLD);
 
-            free(frequency_map);
+            free(frequency_map_13);
             free(energy_ch1);
             free(energy_ch2);
 
             break;
+        case 14:
+            printf("(1-4): %s \n", wave->riff);
+            //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
+            printf("(5-8) Overall size: bytes:%u, Kb:%u \n", wave->overall_size, wave->overall_size / 1024);
+            printf("(9-12) Wave marker: %s\n", wave->wave);
+            printf("(13-16) Fmt marker: %s\n", wave->fmt_chunk_marker);
+            //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
+            printf("(17-20) Length of Fmt wave: %u \n", wave->length_of_fmt);
+            //printf("%u %u \n", buffer2[0], buffer2[1]);
+            printf("(21-22) Format type: %u %s \n", wave->format_type, format_name);
+            //printf("%u %u \n", buffer2[0], buffer2[1]);
+            printf("(23-24) Channels: %u \n", wave->channels);
+            printf("Assumed there would be two channels. Exiting.");
+            //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
+            printf("(25-28) Sample rate: %u\n", wave->sample_rate);
+            //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
+            printf("(29-32) Byte Rate: %u , Bit Rate:%u\n", wave->byterate, wave->byterate * 8);
+            //printf("%u %u \n", buffer2[0], buffer2[1]);
+            printf("(33-34) Block Alignment: %u \n", wave->block_align);
+            //printf("%u %u \n", buffer2[0], buffer2[1]);
+            printf("(35-36) Bits per sample: %u \n", wave->bits_per_sample);
+            printf("(37-40) Data Marker: %s \n", wave->data_chunk_header);
+            //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
+            printf("(41-44) Size of data chunk: %u \n", wave->data_size);
+            printf("Size of each sample:%ld bytes\n", size_of_each_sample);
+            printf("Number of samples:%lu \n", num_samples);
+            printf("Approx.Duration in seconds=%f\n", duration_in_seconds);
+            //printf("Approx.Duration in h:m:s=%s\n", seconds_to_time(duration_in_seconds));
+            printf("\n.Valid range for data values : %ld to %ld \n", low_limit, high_limit);
+            printf("loops is %i\n", loops);
+            break;
     }
 
     if (ptr) {
-        printf("Closing file..\n");
         fclose(ptr);
         ptr = NULL;
     }
@@ -647,7 +672,7 @@ int main(int argc, char ** argv) {
     MPI_Barrier(MPI_COMM_WORLD);
     end_time = clock();
     cpu_time_used = ((double)(end_time-start_time))/CLOCKS_PER_SEC;
-    printf("\nProgram took %f seconds to complete.\n",cpu_time_used);
+    if (rank == 0) printf("\nProgram took %f seconds to complete.\n",cpu_time_used);
 
     MPI_Finalize();
     return 0;
