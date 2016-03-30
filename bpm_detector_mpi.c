@@ -238,6 +238,7 @@ int main(int argc, char ** argv) {
     int maxbpm = 180;
     int bpm_range = maxbpm - minbpm;
     int resolution = 1;
+    int energy_size = bpm_range/resolution;
     float current_bpm = 0;
     int winning_bpm = 0;
 
@@ -375,13 +376,13 @@ int main(int argc, char ** argv) {
         /** Stage 5: Comb Filter Convolution **/
 
         double *energyA;
-        energyA = (double *) malloc(sizeof(double)*(bpm_range/resolution));
+        energyA = (double *) malloc(sizeof(double)*energy_size);
 
         for (j = 0; j < loops; j++) {
             MPI_Recv(sub_band_input, N, MPI_FLOAT, (rank-12), 5, MPI_COMM_WORLD, &status);
             energyA = comb_filter_convolution(sub_band_input, energyA, N, wave->sample_rate, resolution, minbpm, maxbpm, high_limit);
-            if ( 38 < rank < 45 ) MPI_Send(energyA, (bpm_range/resolution), MPI_DOUBLE, 51, 6, MPI_COMM_WORLD);
-            else MPI_Send(energyA, (bpm_range/resolution), MPI_DOUBLE, 52, 6, MPI_COMM_WORLD);
+            if ( 38 < rank < 45 ) MPI_Send(energyA, energy_size, MPI_DOUBLE, 51, 6, MPI_COMM_WORLD);
+            else MPI_Send(energyA, energy_size, MPI_DOUBLE, 52, 6, MPI_COMM_WORLD);
         }
 
         free(energyA);
@@ -390,22 +391,21 @@ int main(int argc, char ** argv) {
         /** Stage 6: Collect energy buffer for each subband **/
 
         double *energyB, *energyC;
-        energyB = (double *) malloc(sizeof(double)*(bpm_range/resolution));
-        energyC = (double *) malloc(sizeof(double)*(bpm_range/resolution));
+        energyB = (double *) malloc(sizeof(double)*(energy_size));
+        energyC = (double *) malloc(sizeof(double)*(energy_size));
 
         for (j = 0; j < loops; j++) {
             energyC = clear_energy_buffer(energyC, bpm_range, resolution);
             for (i = 0; i < num_sub_bands; i++) {
-                if (rank == 51) MPI_Recv(energyB, (bpm_range/resolution), MPI_DOUBLE, 39+i, 6, MPI_COMM_WORLD, &status);
-                else MPI_Recv(energyB, (bpm_range/resoltuion), MPI_DOUBLE, 45+i, 6, MPI_COMM_WORLD, &status);
+                if (rank == 51) MPI_Recv(energyB, (energy_size), MPI_DOUBLE, 39+i, 6, MPI_COMM_WORLD, &status);
+                else MPI_Recv(energyB, (energy_size), MPI_DOUBLE, 45+i, 6, MPI_COMM_WORLD, &status);
 
-                for (k = 0; k < (bpm_range/resolution); k++ ) {
+                for (k = 0; k < (energy_size); k++ ) {
                     energyC[k] = energyC[k] + energyB[k];
                 }
             }
 
-            MPI_Send(energyC, bpm_range/resolution, MPI_DOUBLE, 53, 7, MPI_COMM_WORLD);
-
+            MPI_Send(energyC, energy_size, MPI_DOUBLE, 53, 7, MPI_COMM_WORLD);
         }
 
         free(energyB);
@@ -415,16 +415,16 @@ int main(int argc, char ** argv) {
         /** Stage 7: Compute bpm **/
 
         double *energy_ch1, *energy_ch2;
-        energy_ch1 = (double *) malloc(sizeof(double)*(bpm_range/resolution));
-        energy_ch2 = (double *) malloc(sizeof(double)*(bpm_range/resolution));
+        energy_ch1 = (double *) malloc(sizeof(double)*(energy_size));
+        energy_ch2 = (double *) malloc(sizeof(double)*(energy_size));
         int *frequency_map_1;
         frequency_map_1 = (int *) malloc(200 * sizeof(int));
 
         for (j = 0; j < loops; j++) {
-            MPI_Recv(energy_ch1, bpm_range/resolution, MPI_DOUBLE, 51, 7, MPI_COMM_WORLD, &status);
-            MPI_Recv(energy_ch2, bpm_range/resolution, MPI_DOUBLE, 52, 7, MPI_COMM_WORLD, &status);
+            MPI_Recv(energy_ch1, energy_size, MPI_DOUBLE, 51, 7, MPI_COMM_WORLD, &status);
+            MPI_Recv(energy_ch2, energy_size, MPI_DOUBLE, 52, 7, MPI_COMM_WORLD, &status);
 
-            for (i = 0; i < bpm_range/resolution; i++) {
+            for (i = 0; i < energy_size; i++) {
                 energy_ch1[i] = energy_ch1[i] + energy_ch2[i];
             }
 
