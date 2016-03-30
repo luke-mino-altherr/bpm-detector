@@ -28,12 +28,12 @@ int main(int argc, char ** argv) {
     MPI_Status status;
 
     MPI_Datatype WaveType;
-    MPI_Datatype type[13] = { MPI_UNSIGNED_CHAR, MPI_UNSIGNED_INT, MPI_UNSIGNED_CHAR, MPI_UNSIGNED_CHAR,
-                              MPI_UNSIGNED_INT, MPI_UNSIGNED_INT, MPI_UNSIGNED_INT, MPI_UNSIGNED_INT,
-                              MPI_UNSIGNED_INT, MPI_UNSIGNED_INT, MPI_UNSIGNED_INT, MPI_UNSIGNED_CHAR,
-                              MPI_UNSIGNED_INT};
+    MPI_Datatype type[13] = { MPI_UNSIGNED_CHAR, MPI_UNSIGNED, MPI_UNSIGNED_CHAR, MPI_UNSIGNED_CHAR,
+                              MPI_UNSIGNED, MPI_UNSIGNED, MPI_UNSIGNED, MPI_UNSIGNED,
+                              MPI_UNSIGNED, MPI_UNSIGNED, MPI_UNSIGNED, MPI_UNSIGNED_CHAR,
+                              MPI_UNSIGNED};
     int blocklen[13] = { 4, 1, 4, 4, 1, 1, 1, 1, 1, 1, 1, 4, 1};
-    MPI_Aint disp[14];
+    MPI_Aint disp[13];
 
     // Initialize MPI environment
     MPI_Init(&argc, &argv);
@@ -58,31 +58,34 @@ int main(int argc, char ** argv) {
     WAVE *wave;
     wave = (WAVE *) malloc(sizeof(WAVE));
 
-    disp[0] = &(wave->riff) - wave;
-    disp[1] = &(wave->overall_size) - wave;
-    disp[2] = &(wave->wave) - wave;
-    disp[3] = &(wave->fmt_chunk_marker) - wave;
-    disp[4] = &(wave->length_of_fmt) - wave;
-    disp[5] = &(wave->format_type) - wave;
-    disp[6] = &(wave->channels) - wave;
-    disp[7] = &(wave->sample_rate) - wave;
-    disp[8] = &(wave->byterate) - wave;
-    disp[9] = &(wave->block_align) - wave;
-    disp[10] = &(wave->bits_per_sample) - wave;
-    disp[11] = &(wave->data_chunk_header) - wave;
-    disp[12] = &(wave->data_size) - wave;
-    MPI_Type_create_struct(3, blocklen, disp, type, &WaveType);
+    disp[0] = (char*) &(wave->riff) - (char*) wave;
+    disp[1] = (char*) &(wave->overall_size) - (char*) wave;
+    disp[2] = (char*) &(wave->wave) - (char*) wave;
+    disp[3] = (char*) &(wave->fmt_chunk_marker) - (char*) wave;
+    disp[4] = (char*) &(wave->length_of_fmt) - (char*) wave;
+    disp[5] = (char*) &(wave->format_type) - (char*) wave;
+    disp[6] = (char*) &(wave->channels) - (char*) wave;
+    disp[7] = (char*) &(wave->sample_rate) - (char*) wave;
+    disp[8] = (char*) &(wave->byterate) - (char*) wave;
+    disp[9] = (char*) &(wave->block_align) - (char*) wave;
+    disp[10] = (char*) &(wave->bits_per_sample) - (char*) wave;
+    disp[11] = (char*) &(wave->data_chunk_header) - (char*) wave;
+    disp[12] = (char*) &(wave->data_size) - (char*) wave;
+    MPI_Type_create_struct(13, blocklen, disp, type, &WaveType);
     MPI_Type_commit(&WaveType);
 
+    int read;
+    char *filename = NULL;
+    filename = (char *) malloc(1024 * sizeof(char));
+    
+    if (getcwd(filename, 1024) != NULL) {
+      strcat(filename, "/");
+      strcat(filename, argv[1]);
+    }
+
+
     if (rank == 0) {
-        char *filename = NULL;
-        filename = (char *) malloc(1024 * sizeof(char));
-
-        if (getcwd(filename, 1024) != NULL) {
-            strcat(filename, "/");
-            strcat(filename, argv[1]);
-        }
-
+        
         // open file
         ptr = fopen(filename, "r");
         if (ptr == NULL) {
@@ -91,7 +94,6 @@ int main(int argc, char ** argv) {
         }
 
         // Read in WAVE attributes
-        int read;
         read = fread(wave->riff, sizeof(wave->riff), 1, ptr);
 
         read = fread(buffer4, sizeof(buffer4), 1, ptr);
@@ -118,20 +120,21 @@ int main(int argc, char ** argv) {
         read = fread(buffer2, sizeof(buffer2), 1, ptr);
 
         wave->format_type = buffer2[0] | (buffer2[1] << 8);
-        char format_name[10] = "";
-        if (wave->format_type == 1)
-            strcpy(format_name, "PCM");
-        else if (wave->format_type == 6)
-            strcpy(format_name, "A-law");
-        else if (wave->format_type == 7)
-            strcpy(format_name, "Mu-law");
+        
+	if (wave->format_type != 1) {
+	    printf("Data must be in PCM format. Exiting. \n");
+	    MPI_Finalize();
+	    return -1;
+	}
 
         read = fread(buffer2, sizeof(buffer2), 1, ptr);
 
         wave->channels = buffer2[0] | (buffer2[1] << 8);
+
         if (wave->channels != 2) {
-            printf("Expected a stereo audio file. Exiting.");
-            exit(1);
+            printf("Expected a stereo audio file. Exiting.\n");
+	    MPI_Finalize();
+            return -1;
         }
 
         read = fread(buffer4, sizeof(buffer4), 1, ptr);
@@ -166,9 +169,18 @@ int main(int argc, char ** argv) {
                           (buffer4[1] << 8) |
                           (buffer4[2] << 16) |
                           (buffer4[3] << 24);
-    }
 
+	
+    }
     MPI_Bcast(wave, 1, WaveType, 0, MPI_COMM_WORLD);
+
+    char format_name[10] = "";
+    if (wave->format_type == 1)
+        strcpy(format_name, "PCM");
+    else if (wave->format_type == 6)
+        strcpy(format_name, "A-law");
+    else if (wave->format_type == 7)
+        strcpy(format_name, "Mu-law");
 
     long size_of_each_sample = (wave->channels * wave->bits_per_sample) / 8;
 
@@ -176,13 +188,6 @@ int main(int argc, char ** argv) {
 
     // calculate duration of file
     float duration_in_seconds = (float) wave->overall_size / wave->byterate;
-
-    // read each sample from data chunk if PCM
-    if (wave->format_type != 1) {
-        printf("Data must be in PCM format");
-        MPI_Finalize();
-        return -1;
-    }
 
     int size_is_correct = TRUE;
 
@@ -194,7 +199,7 @@ int main(int argc, char ** argv) {
     }
 
     if (!size_is_correct) {
-        printf("Size is incorrect. Exiting.");
+        printf("Size is incorrect. Exiting.\n");
         MPI_Finalize();
         return -1;
     }
@@ -288,8 +293,8 @@ int main(int argc, char ** argv) {
                 fft_input_ch1[i] = (kiss_fft_scalar) data[0];
                 fft_input_ch2[i] = (kiss_fft_scalar) data[1];
 
-                MPI_Send(fft_input_ch1, 1, MPI_FLOAT, 1, 1, MPI_COMM_WORLD);
-                MPI_Send(fft_input_ch2, 2, MPI_FLOAT, 2, 2, MPI_COMM_WORLD);
+                MPI_Send(fft_input_ch1, N, MPI_FLOAT, 1, 1, MPI_COMM_WORLD);
+                MPI_Send(fft_input_ch2, N, MPI_FLOAT, 2, 2, MPI_COMM_WORLD);
             }
 
             free(fft_input_ch1);
@@ -300,7 +305,7 @@ int main(int argc, char ** argv) {
             int *frequency_map;
             frequency_map = (int *) calloc(200, sizeof(int));
 
-            MPI_Recv(frequency_map, 1, MPI_INT, 13, 15, MPI_COMM_WORLD, &status);
+            MPI_Recv(frequency_map, 200, MPI_INT, 13, 15, MPI_COMM_WORLD, &status);
 
             winning_bpm = most_frequent_bpm(frequency_map);
             printf("BPM winner is: %i\n", winning_bpm);
@@ -316,18 +321,12 @@ int main(int argc, char ** argv) {
             fft_input_ch1_1 = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
 
             kiss_fft_scalar **sub_band_input_ch1_1;
-            sub_band_input_ch1_1 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-            for (i = 0; i < num_sub_bands; i++) {
-                sub_band_input_ch1_1[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-                for (k = 0; k < N; k++) {
-                    sub_band_input_ch1_1[i][k] = 0.0;
-                }
-            }
+            sub_band_input_ch1_1 = allocate_2d_array(num_sub_bands, N);
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(fft_input_ch1_1, 1, MPI_FLOAT, 0, 1, MPI_COMM_WORLD, &status);
+                MPI_Recv(fft_input_ch1_1, N, MPI_FLOAT, 0, 1, MPI_COMM_WORLD, &status);
                 sub_band_input_ch1_1 = filterbank(fft_input_ch1_1, sub_band_input_ch1_1, N, wave->sample_rate);
-                MPI_Send(sub_band_input_ch1_1, 1, MPI_FLOAT, 3, 3, MPI_COMM_WORLD);
+                MPI_Send(sub_band_input_ch1_1, N*num_sub_bands, MPI_FLOAT, 3, 3, MPI_COMM_WORLD);
             }
 
             free(fft_input_ch1_1);
@@ -343,18 +342,12 @@ int main(int argc, char ** argv) {
             fft_input_ch2_2 = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
 
             kiss_fft_scalar **sub_band_input_ch2_2;
-            sub_band_input_ch2_2 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-            for (i = 0; i < num_sub_bands; i++) {
-                sub_band_input_ch2_2[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-                for (k = 0; k < N; k++) {
-                    sub_band_input_ch2_2[i][k] = 0.0;
-                }
-            }
+            sub_band_input_ch2_2 = allocate_2d_array(num_sub_bands, N);
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(fft_input_ch2_2, 1, MPI_FLOAT, 0, 2, MPI_COMM_WORLD, &status);
+                MPI_Recv(fft_input_ch2_2, N, MPI_FLOAT, 0, 2, MPI_COMM_WORLD, &status);
                 sub_band_input_ch2_2 = filterbank(fft_input_ch2_2, sub_band_input_ch2_2, N, wave->sample_rate);
-                MPI_Send(sub_band_input_ch2_2, 1, MPI_FLOAT, 4, 4, MPI_COMM_WORLD);
+                MPI_Send(sub_band_input_ch2_2, num_sub_bands*N, MPI_FLOAT, 4, 4, MPI_COMM_WORLD);
             }
 
             free(fft_input_ch2_2);
@@ -366,17 +359,14 @@ int main(int argc, char ** argv) {
             break;
         case 3:
             kiss_fft_scalar **sub_band_input_ch1_3;
-            sub_band_input_ch1_3 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-            for (i = 0; i < num_sub_bands; i++) {
-                sub_band_input_ch1_3[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-            }
+            sub_band_input_ch1_3 = allocate_2d_array(num_sub_bands, N);
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(sub_band_input_ch1_3, 1, MPI_FLOAT, 1, 3, MPI_COMM_WORLD, &status);
+                MPI_Recv(sub_band_input_ch1_3, N*num_sub_bands, MPI_FLOAT, 1, 3, MPI_COMM_WORLD, &status);
                 for (i = 0; i < num_sub_bands; i++) {
                     sub_band_input_ch1_3[i] = full_wave_rectifier(sub_band_input_ch1_3[i], N);
                 }
-                MPI_Send(sub_band_input_ch1_3, 1, MPI_FLOAT, 5, 5, MPI_COMM_WORLD);
+                MPI_Send(sub_band_input_ch1_3, N*num_sub_bands, MPI_FLOAT, 5, 5, MPI_COMM_WORLD);
             }
 
             for (i = 0; i < num_sub_bands; i++) {
@@ -387,17 +377,14 @@ int main(int argc, char ** argv) {
             break;
         case 4:
             kiss_fft_scalar **sub_band_input_ch2_4;
-            sub_band_input_ch2_4 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-            for (i = 0; i < num_sub_bands; i++) {
-                sub_band_input_ch2_4[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-            }
+            sub_band_input_ch2_4 = allocate_2d_array(num_sub_bands, N);
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(sub_band_input_ch2_4, 1, MPI_FLOAT, 2, 4, MPI_COMM_WORLD, &status);
+                MPI_Recv(sub_band_input_ch2_4, N*num_sub_bands, MPI_FLOAT, 2, 4, MPI_COMM_WORLD, &status);
                 for (i = 0; i < num_sub_bands; i++) {
                     sub_band_input_ch2_4[i] = full_wave_rectifier(sub_band_input_ch2_4[i], N);
                 }
-                MPI_Send(sub_band_input_ch2_4, 1, MPI_FLOAT, 6, 6, MPI_COMM_WORLD);
+                MPI_Send(sub_band_input_ch2_4, N*num_sub_bands, MPI_FLOAT, 6, 6, MPI_COMM_WORLD);
             }
 
             for (i = 0; i < num_sub_bands; i++) {
@@ -408,17 +395,14 @@ int main(int argc, char ** argv) {
             break;
         case 5:
             kiss_fft_scalar **sub_band_input_ch1_5;
-            sub_band_input_ch1_5 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-            for (i = 0; i < num_sub_bands; i++) {
-                sub_band_input_ch1_5[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-            }
+            sub_band_input_ch1_5 = allocate_2d_array(num_sub_bands, N);
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(sub_band_input_ch1_5, 1, MPI_FLOAT, 3, 5, MPI_COMM_WORLD, &status);
+                MPI_Recv(sub_band_input_ch1_5, N*num_sub_bands, MPI_FLOAT, 3, 5, MPI_COMM_WORLD, &status);
                 for (i = 0; i < num_sub_bands; i++) {
                     sub_band_input_ch1_5[i] = hanning_window(sub_band_input_ch1_5[i], N, wave->sample_rate);
                 }
-                MPI_Send(sub_band_input_ch1_5, 1, MPI_FLOAT, 7, 7, MPI_COMM_WORLD);
+                MPI_Send(sub_band_input_ch1_5, N*num_sub_bands, MPI_FLOAT, 7, 7, MPI_COMM_WORLD);
             }
 
             for (i = 0; i < num_sub_bands; i++) {
@@ -429,17 +413,14 @@ int main(int argc, char ** argv) {
             break;
         case 6:
             kiss_fft_scalar **sub_band_input_ch2_6;
-            sub_band_input_ch2_6 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-            for (i = 0; i < num_sub_bands; i++) {
-                sub_band_input_ch2_6[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-            }
+            sub_band_input_ch2_6 = allocate_2d_array(num_sub_bands, N);
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(sub_band_input_ch2_6, 1, MPI_FLOAT, 4, 6, MPI_COMM_WORLD, &status);
+                MPI_Recv(sub_band_input_ch2_6, N*num_sub_bands, MPI_FLOAT, 4, 6, MPI_COMM_WORLD, &status);
                 for (i = 0; i < num_sub_bands; i++) {
                     sub_band_input_ch2_6[i] = hanning_window(sub_band_input_ch2_6[i], N, wave->sample_rate);
                 }
-                MPI_Send(sub_band_input_ch2_6, 1, MPI_FLOAT, 8, 8, MPI_COMM_WORLD);
+                MPI_Send(sub_band_input_ch2_6, N*num_sub_bands, MPI_FLOAT, 8, 8, MPI_COMM_WORLD);
             }
 
             for (i = 0; i < num_sub_bands; i++) {
@@ -450,17 +431,14 @@ int main(int argc, char ** argv) {
             break;
         case 7:
             kiss_fft_scalar **sub_band_input_ch1_7;
-            sub_band_input_ch1_7 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-            for (i = 0; i < num_sub_bands; i++) {
-                sub_band_input_ch1_7[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-            }
+            sub_band_input_ch1_7 = allocate_2d_array(num_sub_bands, N);
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(sub_band_input_ch1_7, 1, MPI_FLOAT, 5, 7, MPI_COMM_WORLD, &status);
+                MPI_Recv(sub_band_input_ch1_7, N*num_sub_bands, MPI_FLOAT, 5, 7, MPI_COMM_WORLD, &status);
                 for (i = 0; i < num_sub_bands; i++) {
                     sub_band_input_ch1_7[i] = differentiator(sub_band_input_ch1_7[i], N);
                 }
-                MPI_Send(sub_band_input_ch1_7, 1, MPI_FLOAT, 9, 9, MPI_COMM_WORLD);
+                MPI_Send(sub_band_input_ch1_7, N*num_sub_bands, MPI_FLOAT, 9, 9, MPI_COMM_WORLD);
             }
 
             for (i = 0; i < num_sub_bands; i++) {
@@ -471,17 +449,14 @@ int main(int argc, char ** argv) {
             break;
         case 8:
             kiss_fft_scalar **sub_band_input_ch2_8;
-            sub_band_input_ch2_8 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-            for (i = 0; i < num_sub_bands; i++) {
-                sub_band_input_ch2_8[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-            }
+            sub_band_input_ch2_8 = allocate_2d_array(num_sub_bands, N);
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(sub_band_input_ch2_8, 1, MPI_FLOAT, 6, 8, MPI_COMM_WORLD, &status);
+                MPI_Recv(sub_band_input_ch2_8, N*num_sub_bands, MPI_FLOAT, 6, 8, MPI_COMM_WORLD, &status);
                 for (i = 0; i < num_sub_bands; i++) {
                     sub_band_input_ch2_8[i] = differentiator(sub_band_input_ch2_8[i], N);
                 }
-                MPI_Send(sub_band_input_ch2_8, 1, MPI_FLOAT, 10, 10, MPI_COMM_WORLD);
+                MPI_Send(sub_band_input_ch2_8, N*num_sub_bands, MPI_FLOAT, 10, 10, MPI_COMM_WORLD);
             }
 
             for (i = 0; i < num_sub_bands; i++) {
@@ -492,17 +467,14 @@ int main(int argc, char ** argv) {
             break;
         case 9:
             kiss_fft_scalar **sub_band_input_ch1_9;
-            sub_band_input_ch1_9 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-            for (i = 0; i < num_sub_bands; i++) {
-                sub_band_input_ch1_9[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-            }
+            sub_band_input_ch1_9 = allocate_2d_array(num_sub_bands, N);
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(sub_band_input_ch1_9, 1, MPI_FLOAT, 7, 9, MPI_COMM_WORLD, &status);
+                MPI_Recv(sub_band_input_ch1_9, N*num_sub_bands, MPI_FLOAT, 7, 9, MPI_COMM_WORLD, &status);
                 for (i = 0; i < num_sub_bands; i++) {
                     sub_band_input_ch1_9[i] = half_wave_rectifier(sub_band_input_ch1_9[i], N);
                 }
-                MPI_Send(sub_band_input_ch1_9, 1, MPI_FLOAT, 11, 11, MPI_COMM_WORLD);
+                MPI_Send(sub_band_input_ch1_9, N*num_sub_bands, MPI_FLOAT, 11, 11, MPI_COMM_WORLD);
             }
 
             for (i = 0; i < num_sub_bands; i++) {
@@ -513,18 +485,15 @@ int main(int argc, char ** argv) {
             break;
         case 10:
             kiss_fft_scalar **sub_band_input_ch2_10;
-            sub_band_input_ch2_10 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-            for (i = 0; i < num_sub_bands; i++) {
-                sub_band_input_ch2_10[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-            }
+            sub_band_input_ch2_10 = allocate_2d_array(num_sub_bands, N);
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(sub_band_input_ch2_10, 1, MPI_FLOAT, 8, 10, MPI_COMM_WORLD, &status);
+                MPI_Recv(sub_band_input_ch2_10, N*num_sub_bands, MPI_FLOAT, 8, 10, MPI_COMM_WORLD, &status);
                 for (i = 0; i < num_sub_bands; i++) {
                     sub_band_input_ch2_10[i] = half_wave_rectifier(sub_band_input_ch2_10[i], N);
 
                 }
-                MPI_Send(sub_band_input_ch2_10, 1, MPI_FLOAT, 12, 12, MPI_COMM_WORLD);
+                MPI_Send(sub_band_input_ch2_10, N*num_sub_bands, MPI_FLOAT, 12, 12, MPI_COMM_WORLD);
             }
 
             for (i = 0; i < num_sub_bands; i++) {
@@ -535,16 +504,13 @@ int main(int argc, char ** argv) {
             break;
         case 11:
             kiss_fft_scalar **sub_band_input_ch1_11;
-            sub_band_input_ch1_11 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-            for (i = 0; i < num_sub_bands; i++) {
-                sub_band_input_ch1_11[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-            }
+            sub_band_input_ch1_11 = allocate_2d_array(num_sub_bands, N);
 
             double *energyA;
             energyA = (double *) malloc(sizeof(double)*(bpm_range/resolution));
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(sub_band_input_ch1_11, 1, MPI_FLOAT, 9, 11, MPI_COMM_WORLD, &status);
+                MPI_Recv(sub_band_input_ch1_11, N*num_sub_bands, MPI_FLOAT, 9, 11, MPI_COMM_WORLD, &status);
 
                 // Clear energyA buffer before calculating new energyA data
                 energyA = clear_energy_buffer(energyA, bpm_range, resolution);
@@ -553,7 +519,7 @@ int main(int argc, char ** argv) {
                     energyA = comb_filter_convolution(sub_band_input_ch1_11[i], energyA, N, wave->sample_rate,
                                                      1, minbpm, maxbpm, high_limit);
                 }
-                MPI_Send(energyA, 1, MPI_FLOAT, 13, 13, MPI_COMM_WORLD);
+                MPI_Send(energyA, bpm_range/resolution, MPI_DOUBLE, 13, 13, MPI_COMM_WORLD);
             }
 
             free(energyA);
@@ -565,16 +531,13 @@ int main(int argc, char ** argv) {
             break;
         case 12:
             kiss_fft_scalar **sub_band_input_ch2_12;
-            sub_band_input_ch2_12 = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-            for (i = 0; i < num_sub_bands; i++) {
-                sub_band_input_ch2_12[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
-            }
+            sub_band_input_ch2_12 = allocate_2d_array(num_sub_bands, N);
 
             double *energyB;
             energyB = (double *) malloc(sizeof(double)*(bpm_range/resolution));
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(sub_band_input_ch2_12, 1, MPI_FLOAT, 10, 12, MPI_COMM_WORLD, &status);
+                MPI_Recv(sub_band_input_ch2_12, N*num_sub_bands, MPI_FLOAT, 10, 12, MPI_COMM_WORLD, &status);
 
                 // Clear energyB buffer before calculating new energyB data
                 energyB = clear_energy_buffer(energyB, bpm_range, resolution);
@@ -583,7 +546,7 @@ int main(int argc, char ** argv) {
                     energyB = comb_filter_convolution(sub_band_input_ch2_12[i], energyB, N, wave->sample_rate,
                                                      1, minbpm, maxbpm, high_limit);
                 }
-                MPI_Send(energyB, 1, MPI_FLOAT, 13, 14, MPI_COMM_WORLD);
+                MPI_Send(energyB, bpm_range/resolution, MPI_DOUBLE, 13, 14, MPI_COMM_WORLD);
             }
 
             free(energyB);
@@ -598,13 +561,12 @@ int main(int argc, char ** argv) {
             energy_ch1 = (double *) malloc(sizeof(double)*(bpm_range/resolution));
             energy_ch2 = (double *) malloc(sizeof(double)*(bpm_range/resolution));
 
-
             int *frequency_map_13;
             frequency_map_13 = (int *) calloc(200, sizeof(int));
 
             for (j = 0; j < loops; j++) {
-                MPI_Recv(energy_ch1, 1, MPI_FLOAT, 11, 13, MPI_COMM_WORLD, &status);
-                MPI_Recv(energy_ch2, 1, MPI_FLOAT, 12, 14, MPI_COMM_WORLD, &status);
+                MPI_Recv(energy_ch1, bpm_range/resolution, MPI_DOUBLE, 11, 13, MPI_COMM_WORLD, &status);
+                MPI_Recv(energy_ch2, bpm_range/resolution, MPI_DOUBLE, 12, 14, MPI_COMM_WORLD, &status);
                 for (i = 0; i < bpm_range/resolution; i++) {
                     energy_ch1[i] = energy_ch1[i] + energy_ch2[i];
                 }
@@ -620,7 +582,7 @@ int main(int argc, char ** argv) {
                 printf("Current BPM winner is: %i\n", most_frequent_bpm(frequency_map));
             }
 
-            MPI_Send(frequency_map_13,  1, MPI_INT, 0, 15, MPI_COMM_WORLD);
+            MPI_Send(frequency_map_13, 200, MPI_INT, 0, 15, MPI_COMM_WORLD);
 
             free(frequency_map_13);
             free(energy_ch1);
@@ -639,7 +601,6 @@ int main(int argc, char ** argv) {
             printf("(21-22) Format type: %u %s \n", wave->format_type, format_name);
             //printf("%u %u \n", buffer2[0], buffer2[1]);
             printf("(23-24) Channels: %u \n", wave->channels);
-            printf("Assumed there would be two channels. Exiting.");
             //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
             printf("(25-28) Sample rate: %u\n", wave->sample_rate);
             //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
@@ -976,4 +937,18 @@ void dump_map(int * map) {
         printf("BPM: %i, Count: %i\n", i, map[i]);
     }
 
+}
+
+kiss_fft_scalar ** allocate_2d_array(int n, int m) {
+    kiss_fft_scalar ** array;
+    array = (kiss_fft_scalar **) malloc(n * sizeof(kiss_fft_scalar*));
+    if (array == NULL) exit (-1);
+
+    array[0] = (kiss_fft_scalar*) malloc (n * m * sizeof(kiss_fft_scalar));
+    if (array[0] == NULL) exit (-1);
+
+    for (i=1; i<n; i++)
+        array[i] = array[0] + i * m;
+
+    return array;
 }
