@@ -39,6 +39,7 @@ int main(int argc, char ** argv) {
     MPI_Init(&argc, &argv);
     MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Request request;
 
     // Start timing code
     MPI_Barrier(MPI_COMM_WORLD);
@@ -76,15 +77,16 @@ int main(int argc, char ** argv) {
 
     int read;
     char *filename = NULL;
-    filename = (char *) malloc(1024 * sizeof(char));
-    
-    if (getcwd(filename, 1024) != NULL) {
-      strcat(filename, "/");
-      strcat(filename, argv[1]);
-    }
-
+        
 
     if (rank == 0) {
+
+        filename = (char *) malloc(1024 * sizeof(char));
+
+        if (getcwd(filename, 1024) != NULL) {
+            strcat(filename, "/");
+            strcat(filename, argv[1]);
+        }
         
         // open file
         ptr = fopen(filename, "r");
@@ -242,6 +244,9 @@ int main(int argc, char ** argv) {
     float current_bpm = 0;
     int winning_bpm = 0;
 
+    int recipient;
+    int sender;
+
     // Allocate subband buffers
     int num_sub_bands = 6;
     unsigned int sub_band_size = N / num_sub_bands;
@@ -249,9 +254,11 @@ int main(int argc, char ** argv) {
     kiss_fft_scalar *sub_band_input;
     sub_band_input = (kiss_fft_scalar *) malloc(N*sizeof(kiss_fft_scalar));
 
-    if (rank == 0) {
-        /** Stage 0: Read in data from file **/
+    MPI_Barrier(MPI_COMM_WORLD);
 
+    if (rank == 0) {
+        // Stage 0: Read in data from file
+      
         // Allocate FFT buffers to read in data
         kiss_fft_scalar *fft_input_ch1, *fft_input_ch2;
         fft_input_ch1 = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
@@ -260,10 +267,16 @@ int main(int argc, char ** argv) {
         // Data buffer to read from file into
         kiss_fft_scalar *data;
         data = (kiss_fft_scalar *) malloc(2 * sizeof(kiss_fft_scalar));
+        data[0] = 0.0;
+        data[1] = 0.0;
 
         // Temporarily hold data from file
         char *temp_data_buffer;
         temp_data_buffer = (char *) malloc(bytes_in_each_channel*sizeof(char));
+
+        for (j = 0; j < bytes_in_each_channel; j++) {
+            temp_data_buffer[i] = 0;
+        }
 
         for (j = 0; j < loops; j++) {
             // Read in data from file to left and right channel buffers
@@ -295,19 +308,20 @@ int main(int argc, char ** argv) {
                 fft_input_ch1[i] = (kiss_fft_scalar) data[0];
                 fft_input_ch2[i] = (kiss_fft_scalar) data[1];
             } // End reading in data for left and right channels
+            //printf("%i: Read data, preparing to send %i.\n",rank, j);
             MPI_Send(fft_input_ch1, N, MPI_FLOAT, 1, 1, MPI_COMM_WORLD);
             MPI_Send(fft_input_ch2, N, MPI_FLOAT, 2, 1, MPI_COMM_WORLD);
-
+            //printf("%i: Sent data %i to processes 1 and 2\n", rank, j);
         }
         free(fft_input_ch1);
         free(fft_input_ch2);
         free(temp_data_buffer);
         free(data);
-
+        
         int *frequency_map;
         frequency_map = (int *) calloc(200, sizeof(int));
 
-        MPI_Recv(frequency_map, 200, MPI_INT, 53, 8, MPI_COMM_WORLD, &status);
+        MPI_Recv(&(frequency_map[0]), 200, MPI_INT, 53, 8, MPI_COMM_WORLD, &status);
 
         winning_bpm = most_frequent_bpm(frequency_map);
         printf("BPM winner is: %i\n", winning_bpm);
@@ -317,113 +331,150 @@ int main(int argc, char ** argv) {
 
         free(frequency_map);
     }
-    else if (rank == 1 || rank == 2) {
-        /** Stage 1: Filterbank **/
+    else if ((rank == 1) || (rank == 2)) {
+        // Stage 1: Filterbank
 
         kiss_fft_scalar *fft_input;
         fft_input = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+        //printf("Size of kiss_fft_scalar: %i\n", sizeof(kiss_fft_scalar));
 
-        kiss_fft_scalar **sub_band_input_2d;
-        sub_band_input_2d = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
-        for (i = 0; i < num_sub_bands; i++) {
-            sub_band_input_2d[i] = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_scalar));
+        kiss_fft_scalar **sub_band_input_2d = (kiss_fft_scalar **) malloc(num_sub_bands * sizeof(kiss_fft_scalar *));
+        kiss_fft_scalar * sub_band_data = (kiss_fft_scalar *) malloc(N*num_sub_bands*sizeof(kiss_fft_scalar));
+        for (j = 0; j < num_sub_bands; j++) {
+            sub_band_input_2d[j] = &(sub_band_data[j*N]);
         }
 
         for (j = 0; j < loops; j++) {
+	  //printf("%i: Waiting to receive.\n", rank);
             MPI_Recv(fft_input, N, MPI_FLOAT, 0, 1, MPI_COMM_WORLD, &status);
-            printf("Rank %s receiving %i\n",rank,j);
+            //printf("%i: Received %i\n",rank,j);
             sub_band_input_2d = filterbank(fft_input, sub_band_input_2d, N, wave->sample_rate);
-            for (i = 0; i < num_sub_bands; i++)
-                MPI_Send(sub_band_input_2d[i], N, MPI_FLOAT, (rank-1)*num_sub_bands+3+i, 2, MPI_COMM_WORLD);
+            for (i = 0; i < num_sub_bands; i++){
+                recipient = (rank-1)*num_sub_bands+3+i;
+                //printf("%i: Preparing to send chunk %i to %i in loop %i\n", rank, i, recipient, j);
+                MPI_Send(&(sub_band_input_2d[i][0]), N, MPI_FLOAT, recipient, 2, MPI_COMM_WORLD);
+                //printf("%i: Sent data chunk %i to process %i\n", rank, i, recipient);
+            }
         }
 
         free(fft_input);
-        for (i = 0; i < num_sub_bands; i++) {
-            free(sub_band_input_2d[i]);
-        }
+        free(sub_band_data);
         free(sub_band_input_2d);
-    }
-    else if ( 2 < rank < 15 ) {
-        /** Stage 2: Full-Wave_Rectification **/
+    } else if (2 < rank && rank < 15 ) {
+        // Stage 2: Full-Wave_Rectification
+
+        recipient = rank + 12;
 
         for (j = 0; j < loops; j++) {
-            if (2 < rank < 9) MPI_Recv(sub_band_input, N, MPI_FLOAT, 1, 2, MPI_COMM_WORLD, &status);
-            else MPI_Recv(sub_band_input, N, MPI_FLOAT, 2, 2, MPI_COMM_WORLD, &status);
+            if (2 < rank && rank < 9) {
+	      //printf("%i: Waiting to receive.\n", rank);
+                MPI_Recv(&(sub_band_input[0]), N, MPI_FLOAT, 1, 2, MPI_COMM_WORLD, &status);
+            } else if (8 < rank && rank < 15) {
+	      //printf("%i: Waiting to receive.\n", rank);
+                MPI_Recv(&(sub_band_input[0]), N, MPI_FLOAT, 2, 2, MPI_COMM_WORLD, &status);
+            }
+            //printf("%i: Received data in loop %i\n", rank, j);
             sub_band_input = full_wave_rectifier(sub_band_input, N);
-            MPI_Send(sub_band_input, N, MPI_FLOAT, (rank+12), 3, MPI_COMM_WORLD);
+            //printf("%i: Preparing to send loop %i to %i.\n", rank, j, recipient);
+            MPI_Send(&(sub_band_input[0]), N, MPI_FLOAT, recipient, 3, MPI_COMM_WORLD);
         }
-    }
-    else if ( 14 < rank < 27 ) {
-        /** Stage 3: Hanning Window Smoothing **/
+    } else if (14 < rank && rank < 27 ) {
+        // Stage 3: Hanning Window Smoothing
+
+        sender = rank - 12;
+        recipient = rank + 12;
 
         for (j = 0; j < loops; j++) {
-            MPI_Recv(sub_band_input, N, MPI_FLOAT, (rank-12), 3, MPI_COMM_WORLD, &status);
+	  //printf("%i: Waiting to receive.\n", rank);
+            MPI_Recv(&(sub_band_input[0]), N, MPI_FLOAT, sender, 3, MPI_COMM_WORLD, &status);
+            //printf("%i: Received data in loop %i\n", rank, j);
             sub_band_input = hanning_window(sub_band_input, N, wave->sample_rate);
-            MPI_Send(sub_band_input, N, MPI_FLOAT, (rank+12), 4, MPI_COMM_WORLD);
+            //printf("%i: Preparing to send loop %i to %i.\n", rank, j, recipient);
+            MPI_Send(&(sub_band_input[0]), N, MPI_FLOAT, recipient, 4, MPI_COMM_WORLD);
         }
-    }
-    else if ( 26 < rank < 39 ) {
-        /** Stage 4: Differentiation and Half_wave Rectification **/
+    } else if (26 < rank && rank < 39 ) {
+        // Stage 4: Differentiation and Half_wave Rectification
 
+        sender = rank - 12;
+        recipient = rank + 12;
+	    
         for (j = 0; j < loops; j++) {
-            MPI_Recv(sub_band_input, N, MPI_FLOAT, (rank-12), 4, MPI_COMM_WORLD, &status);
+	  //printf("%i: Waiting to receive.\n", rank);
+            MPI_Recv(&(sub_band_input[0]), N, MPI_FLOAT, sender, 4, MPI_COMM_WORLD, &status);
+            //printf("%i: Received data in loop %i\n",rank,j);
             sub_band_input = differentiator(sub_band_input, N);
             sub_band_input = half_wave_rectifier(sub_band_input, N);
-            MPI_Send(sub_band_input, N, MPI_FLOAT, (rank+12), 5, MPI_COMM_WORLD);
+            //printf("%i: Preparing to send loop %i to %i.\n", rank, j, recipient);
+            MPI_Send(&(sub_band_input[0]), N, MPI_FLOAT, recipient, 5, MPI_COMM_WORLD);
         }
-    }
-    else if ( 38 < rank < 51 ) {
-        /** Stage 5: Comb Filter Convolution **/
+    } else if (38 < rank && rank < 51 ) {
+        // Stage 5: Comb Filter Convolution
+
+        sender = rank - 12;
 
         double *energyA;
         energyA = (double *) malloc(sizeof(double)*energy_size);
 
         for (j = 0; j < loops; j++) {
-            MPI_Recv(sub_band_input, N, MPI_FLOAT, (rank-12), 5, MPI_COMM_WORLD, &status);
+	  //printf("%i: Waiting to receive.\n", rank);
+            MPI_Recv(&(sub_band_input[0]), N, MPI_FLOAT, sender, 5, MPI_COMM_WORLD, &status);
+            //printf("%i: Received data in loop %i\n", rank, j);
             energyA = comb_filter_convolution(sub_band_input, energyA, N, wave->sample_rate, resolution, minbpm, maxbpm, high_limit);
-            if ( 38 < rank < 45 ) MPI_Send(energyA, energy_size, MPI_DOUBLE, 51, 6, MPI_COMM_WORLD);
-            else MPI_Send(energyA, energy_size, MPI_DOUBLE, 52, 6, MPI_COMM_WORLD);
+            //printf("%i: Preparing to send loop %i to 51.\n", rank, j);
+            if ( 38 < rank && rank < 45 ){
+	      MPI_Send(&(energyA[0]), energy_size, MPI_DOUBLE, 51, 6, MPI_COMM_WORLD);
+            } else {
+	      MPI_Send(&(energyA[0]), energy_size, MPI_DOUBLE, 52, 6, MPI_COMM_WORLD);
+            }
         }
 
         free(energyA);
-    }
-    else if (rank == 51 || rank == 52) {
-        /** Stage 6: Collect energy buffer for each subband **/
+    } else if ((rank == 51) || (rank == 52)) {
+        // Stage 6: Collect energy buffer for each subband
 
         double *energyB, *energyC;
-        energyB = (double *) malloc(sizeof(double)*(energy_size));
-        energyC = (double *) malloc(sizeof(double)*(energy_size));
+        energyB = (double *) malloc(sizeof(double)*energy_size);
+        energyC = (double *) malloc(sizeof(double)*energy_size);
 
         for (j = 0; j < loops; j++) {
             energyC = clear_energy_buffer(energyC, bpm_range, resolution);
             for (i = 0; i < num_sub_bands; i++) {
-                if (rank == 51) MPI_Recv(energyB, (energy_size), MPI_DOUBLE, 39+i, 6, MPI_COMM_WORLD, &status);
-                else MPI_Recv(energyB, (energy_size), MPI_DOUBLE, 45+i, 6, MPI_COMM_WORLD, &status);
-
-                for (k = 0; k < (energy_size); k++ ) {
+	      //printf("%i: Waiting to receive.\n", rank);
+                if (rank == 51) {
+                    recipient = i + 39;
+                    MPI_Recv(&(energyB[0]), energy_size, MPI_DOUBLE, recipient, 6, MPI_COMM_WORLD, &status);
+                }
+                else {
+                    recipient = i + 45;
+                    MPI_Recv(&(energyB[0]), energy_size, MPI_DOUBLE, recipient, 6, MPI_COMM_WORLD, &status);
+                }
+                //printf("%i: Received data in loop %i\n",rank,j);
+                for (k = 0; k < energy_size; k++ ) {
                     energyC[k] = energyC[k] + energyB[k];
                 }
             }
-
-            MPI_Send(energyC, energy_size, MPI_DOUBLE, 53, 7, MPI_COMM_WORLD);
+            //printf("%i: Preparing to send loop %i to 53.\n", rank, j);
+            MPI_Send(&(energyC[0]), energy_size, MPI_DOUBLE, 53, 7, MPI_COMM_WORLD);
         }
 
         free(energyB);
         free(energyC);
-    }
-    else if (rank == 53) {
-        /** Stage 7: Compute bpm **/
+    } else if (rank == 53) {
+        // Stage 7: Compute bpm 
 
         double *energy_ch1, *energy_ch2;
-        energy_ch1 = (double *) malloc(sizeof(double)*(energy_size));
-        energy_ch2 = (double *) malloc(sizeof(double)*(energy_size));
+        energy_ch1 = (double *) malloc(sizeof(double)*energy_size);
+        energy_ch2 = (double *) malloc(sizeof(double)*energy_size);
+
         int *frequency_map_1;
-        frequency_map_1 = (int *) malloc(200 * sizeof(int));
+        frequency_map_1 = (int *) calloc(200, sizeof(int));
 
         for (j = 0; j < loops; j++) {
-            MPI_Recv(energy_ch1, energy_size, MPI_DOUBLE, 51, 7, MPI_COMM_WORLD, &status);
-            MPI_Recv(energy_ch2, energy_size, MPI_DOUBLE, 52, 7, MPI_COMM_WORLD, &status);
-
+	  //printf("%i: Waiting to receive.\n", rank);
+            MPI_Recv(&(energy_ch1[0]), energy_size, MPI_DOUBLE, 51, 7, MPI_COMM_WORLD, &status);
+            //printf("%i: Received data from process 51 in loop %i\n",rank,j);
+            MPI_Recv(&(energy_ch2[0]), energy_size, MPI_DOUBLE, 52, 7, MPI_COMM_WORLD, &status);
+            //printf("%i: Received data from process 52 in loop %i\n",rank,j);
             for (i = 0; i < energy_size; i++) {
                 energy_ch1[i] = energy_ch1[i] + energy_ch2[i];
             }
@@ -432,57 +483,60 @@ int main(int argc, char ** argv) {
             current_bpm = compute_bpm(energy_ch1, bpm_range, minbpm, resolution);
 
             if (current_bpm != -1) {
-                printf("BPM computation is: %f\n", current_bpm);
+	      //printf("BPM computation is: %f\n", current_bpm);
                 frequency_map_1[(int) round(current_bpm)] += 1;
             }
 
-            printf("Current BPM winner is: %i\n", most_frequent_bpm(frequency_map_1));
+            //printf("Current BPM winner is: %i\n", most_frequent_bpm(frequency_map_1));
         }
 
-        MPI_Send(frequency_map_1, 200, MPI_INT, 0, 8, MPI_COMM_WORLD);
+        MPI_Send(&(frequency_map_1[0]), 200, MPI_INT, 0, 8, MPI_COMM_WORLD);
 
         free(frequency_map_1);
         free(energy_ch1);
         free(energy_ch2);
-    }
-    else if (rank == 54) {
-      printf("(1-4): %s \n", wave->riff);
-            //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
-            printf("(5-8) Overall size: bytes:%u, Kb:%u \n", wave->overall_size, wave->overall_size / 1024);
-            printf("(9-12) Wave marker: %s\n", wave->wave);
-            printf("(13-16) Fmt marker: %s\n", wave->fmt_chunk_marker);
-            //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
-            printf("(17-20) Length of Fmt wave: %u \n", wave->length_of_fmt);
-            //printf("%u %u \n", buffer2[0], buffer2[1]);
-            printf("(21-22) Format type: %u %s \n", wave->format_type, format_name);
-            //printf("%u %u \n", buffer2[0], buffer2[1]);
-            printf("(23-24) Channels: %u \n", wave->channels);
-            //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
-            printf("(25-28) Sample rate: %u\n", wave->sample_rate);
-            //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
-            printf("(29-32) Byte Rate: %u , Bit Rate:%u\n", wave->byterate, wave->byterate * 8);
-            //printf("%u %u \n", buffer2[0], buffer2[1]);
-            printf("(33-34) Block Alignment: %u \n", wave->block_align);
-            //printf("%u %u \n", buffer2[0], buffer2[1]);
-            printf("(35-36) Bits per sample: %u \n", wave->bits_per_sample);
-            printf("(37-40) Data Marker: %s \n", wave->data_chunk_header);
-            //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
-            printf("(41-44) Size of data chunk: %u \n", wave->data_size);
-            printf("Size of each sample:%ld bytes\n", size_of_each_sample);
-            printf("Number of samples:%lu \n", num_samples);
-            printf("Approx.Duration in seconds=%f\n", duration_in_seconds);
-            //printf("Approx.Duration in h:m:s=%s\n", seconds_to_time(duration_in_seconds));
-            printf("\n.Valid range for data values : %ld to %ld \n", low_limit, high_limit);
-            printf("loops is %i\n", loops);
-    }
-
-    if (ptr) {
-        fclose(ptr);
-        ptr = NULL;
+    } else if (rank == 54) {
+        printf("(1-4): %s \n", wave->riff);
+        //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
+        printf("(5-8) Overall size: bytes:%u, Kb:%u \n", wave->overall_size, wave->overall_size / 1024);
+        printf("(9-12) Wave marker: %s\n", wave->wave);
+        printf("(13-16) Fmt marker: %s\n", wave->fmt_chunk_marker);
+        //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
+        printf("(17-20) Length of Fmt wave: %u \n", wave->length_of_fmt);
+        //printf("%u %u \n", buffer2[0], buffer2[1]);
+        printf("(21-22) Format type: %u %s \n", wave->format_type, format_name);
+        //printf("%u %u \n", buffer2[0], buffer2[1]);
+        printf("(23-24) Channels: %u \n", wave->channels);
+        //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
+        printf("(25-28) Sample rate: %u\n", wave->sample_rate);
+        //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
+        printf("(29-32) Byte Rate: %u , Bit Rate:%u\n", wave->byterate, wave->byterate * 8);
+        //printf("%u %u \n", buffer2[0], buffer2[1]);
+        printf("(33-34) Block Alignment: %u \n", wave->block_align);
+        //printf("%u %u \n", buffer2[0], buffer2[1]);
+        printf("(35-36) Bits per sample: %u \n", wave->bits_per_sample);
+        printf("(37-40) Data Marker: %s \n", wave->data_chunk_header);
+        //printf("%u %u %u %u\n", buffer4[0], buffer4[1], buffer4[2], buffer4[3]);
+        printf("(41-44) Size of data chunk: %u \n", wave->data_size);
+        printf("Size of each sample:%ld bytes\n", size_of_each_sample);
+        printf("Number of samples:%lu \n", num_samples);
+        printf("Approx.Duration in seconds=%f\n", duration_in_seconds);
+        //printf("Approx.Duration in h:m:s=%s\n", seconds_to_time(duration_in_seconds));
+        printf("\n.Valid range for data values : %ld to %ld \n", low_limit, high_limit);
+        printf("loops is %i\n", loops);
     }
 
     free(wave);
-    free(filename);
+    
+    if (rank == 0) {
+      free(filename);
+
+    if (ptr) {
+      fclose(ptr);
+      ptr = NULL;
+    }
+    }
+    
 
     // Finish timing program
     MPI_Barrier(MPI_COMM_WORLD);
@@ -770,14 +824,14 @@ int max_array(double * array, int size) {
             index = i;
         }
     }
-    printf("Max value at %i is %f\n", index, max);
+    //printf("Max value at %i is %f\n", index, max);
     if (max == 0.0) return -1;
     else return index;
 }
 
 int most_frequent_bpm(int * map) {
     int i, winner=0, value=0;
-    for (i=0; i<200; i++) {
+    for (i=60; i<200; i++) {
         if (map[i] > value) {
             winner = i;
             value = map[winner];
@@ -791,6 +845,22 @@ void dump_map(int * map) {
     for (i = 0; i < 200; i++) {
         printf("BPM: %i, Count: %i\n", i, map[i]);
     }
+}
 
+void plot_map(int * map) {
+  int i;
+  FILE *gnuplot = popen("gnuplot", "w");
+  fprintf(gnuplot, "plot '-'\n");
+  for (i = 0; i < 200; i++)
+    fprintf(gnuplot, "%g %g\n", i, map[i]);
+  fprintf(gnuplot, "e\n");
+  fflush(gnuplot);
+}
+
+void sanitize_map(int * map) {
+  int i;
+  for (i = 0; i < 60; i++) {
+    map[i] = 0;
+  }
 }
 
