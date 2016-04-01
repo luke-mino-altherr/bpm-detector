@@ -4,9 +4,9 @@
 #BSUB -e error_file_mpi
 #BSUB -n 10
 #BSUB -q ht-10g
-#BSUB cwd /home/mino-altherr.l/bpmDetector
+#BSUB cwd /home/<INSERT USERNAME>/bpmDetector
 
-work=/home/mino-altherr.l/bpmDetector
+work=/home/<INSERT USERNAME>/bpmDetector
 cd $work
 tempfile1=hostlistrun
 tempfile2=hostlist-tcp
@@ -20,6 +20,5 @@ for ((i=0; i<${#hosts[@]}; i += 2)) ;
    echo $HOST:$CORE >> $tempfile2
 done
 
-#mpirun -np 60 valgrind --tool=memcheck --log-file=output bin/bpm-detector-mpi Samples/fire.wav
-mpirun -np 60 -prot -TCP -lsf ./bin/bpm-detector-mpi Samples/fire.wav
+mpirun -np 60 -prot -TCP -lsf ./bin/bpm-detector-mpi <INSERT RELATIVE PATH TO AUDIO FILE>
 

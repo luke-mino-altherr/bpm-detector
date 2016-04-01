@@ -30,6 +30,18 @@ To run the OpenMP version on Northeastern's discovery cluster, use the `run_omp.
 
     $ bsub < bash/run_omp.bash
 
+### Parallel with MPI
+
+    To compile the MPI version of the project, call the following command in the working directory of the project:
+
+        $ make mpi
+
+    This will create a binary called `bpm-detector-mpi` in the `bin/` directory. Similarly to the sequential version, this program expects the relative path of a stereo audio file.
+
+    To run the MPI version on Northeastern's discovery cluster, use the `run_mpi.bash` script in the `bash/` directory. First, you must edit the bash to include your username and relative path of the audio file to test as indicated in the bash file. Then run the following command:
+
+        $ bsub < bash/run_mpi.bash
+
 ## How it works
 
 The algorithm used to calculate the bpm is based largely on Eric D. Scheirer's paper, [Tempo and beat analysis of acoustic musical signals](http://www.iro.umontreal.ca/~pift6080/H09/documents/papers/scheirer_jasa.pdf), and the project called [Beat This](https://www.clear.rice.edu/elec301/Projects01/beat_sync/index.html) by Kileen Cheng, Bobak Nazer, Jyoti Uppuluri, and Ryan Verret.
