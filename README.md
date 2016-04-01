@@ -32,15 +32,15 @@ To run the OpenMP version on Northeastern's discovery cluster, use the `run_omp.
 
 ### Parallel with MPI
 
-    To compile the MPI version of the project, call the following command in the working directory of the project:
+To compile the MPI version of the project, call the following command in the working directory of the project:
 
-        $ make mpi
+    $ make mpi
 
-    This will create a binary called `bpm-detector-mpi` in the `bin/` directory. Similarly to the sequential version, this program expects the relative path of a stereo audio file.
+This will create a binary called `bpm-detector-mpi` in the `bin/` directory. Similarly to the sequential version, this program expects the relative path of a stereo audio file.
 
-    To run the MPI version on Northeastern's discovery cluster, use the `run_mpi.bash` script in the `bash/` directory. First, you must edit the bash to include your username and relative path of the audio file to test as indicated in the bash file. Then run the following command:
+To run the MPI version on Northeastern's discovery cluster, use the `run_mpi.bash` script in the `bash/` directory. First, you must edit the bash to include your username and relative path of the audio file to test as indicated in the bash file. Then run the following command:
 
-        $ bsub < bash/run_mpi.bash
+    $ bsub < bash/run_mpi.bash
 
 ## How it works
 
