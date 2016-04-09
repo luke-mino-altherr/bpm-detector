@@ -1,0 +1,11 @@
+#!/usr/bin/env gnuplot
+set terminal png
+set output "stage1.png"
+
+set title "Full-Wave Rectify"
+set ylabel "sample value"
+set bmargin 0
+set format x "%g"
+set xlabel "time (s)"
+set key off
+plot "../data/stage1_0.dat" using 1:2 every 100 with lines lc rgbcolor "#a0a0b0" 

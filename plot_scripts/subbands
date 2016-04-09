@@ -1,0 +1,74 @@
+#!/usr/bin/env gnuplot
+set terminal png size 600,800
+set output "filterbank_ch1.png"
+set multiplot layout 6,1 title "Filterbank"
+set offset 0,0,graph 0.05, graph 0.05
+
+TOP= 0.95
+DY = 0.145
+
+#set ylabel "sample value"
+set tmargin at screen TOP
+set bmargin at screen TOP-DY
+set format x ""
+set format y ""
+set key top
+#set size ratio 1/6
+unset ytics
+plot "../data/stage0_0.dat" using 1:2 every 100 with lines lc rgbcolor "#a0a0b0" title "Subband 0"
+
+#set ylabel "sample value"
+
+
+set tmargin at screen TOP-DY
+set bmargin at screen TOP-2*DY
+set format x ""
+set format y ""
+set key top
+#set size ratio 1/6
+unset ytics
+plot "../data/stage0_1.dat" using 1:2 every 100 with lines lc rgbcolor "#a0a0b0" title "Subband 1"
+
+#set ylabel "sample value"
+set bmargin at screen TOP-2*DY
+set tmargin at screen TOP-3*DY
+set format x ""
+set format y ""
+set key top
+#set size 1,0.16
+unset ytics
+plot "../data/stage0_2.dat" using 1:2 every 100 with lines lc rgbcolor "#a0a0b0" title "Subband 2"
+
+#set ylabel "sample value"
+set bmargin at screen TOP-3*DY
+set tmargin at screen TOP-4*DY
+set format x ""
+set format y ""
+set key top
+#set size 1,0.16
+unset ytics
+plot "../data/stage0_3.dat" using 1:2 every 100 with lines lc rgbcolor "#a0a0b0" title "Subband 3"
+
+#set ylabel "sample value"
+set bmargin at screen TOP-4*DY
+set tmargin at screen TOP-5*DY
+set format x ""
+set format y ""
+set key top
+#set size 1,0.16
+unset ytics
+plot "../data/stage0_4.dat" using 1:2 every 100 with lines lc rgbcolor "#a0a0b0" title "Subband 4"
+
+#set xlabel "time (s)"
+set bmargin at screen TOP-5*DY
+set tmargin at screen TOP-6*DY
+set format x "%g"
+set xlabel "Time (s)
+set format y ""
+set key top
+show size
+#set size 1,0.16
+unset ytics
+plot "../data/stage0_5.dat" using 1:2 every 100 with lines lc rgbcolor "#a0a0b0" title "Subband 5"
+
+unset multiplot
