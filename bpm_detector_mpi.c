@@ -8,7 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
-#include "kiss_fftr.h"
+#include "kiss_fft/kiss_fftr.h"
 #include "bpm_detector.h"
 #include "mpi.h"
 #define TRUE 1
