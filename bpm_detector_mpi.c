@@ -548,6 +548,41 @@ int main(int argc, char ** argv) {
     return 0;
 
 }
+void plot(char *filename, kiss_fft_scalar *array1, kiss_fft_scalar *array2, int size, unsigned int sampling_rate) {
+    FILE *outfile;
+    outfile = fopen(filename, "w");
+
+    int i;
+    for (i=0; i<size; i++) {
+        fprintf(outfile, "%f %f %f\n", (float)i/(float)sampling_rate, array1[i], array2[i]);
+    }
+
+    fclose(outfile);
+}
+
+void plot2(char *filename, double *array1, int size) {
+    FILE *outfile;
+    outfile = fopen(filename, "w");
+
+    int i;
+    for (i=0; i<size; i++) {
+        fprintf(outfile, "%i %g\n", i+60, array1[i]);
+    }
+
+    fclose(outfile);
+}
+
+void plot_complex(char *filename, kiss_fft_cpx * array, int size, unsigned int sample_rate) {
+    FILE *outfile;
+    outfile = fopen(filename, "w");
+
+    int i;
+    for (i=0; i<size; i++) {
+        fprintf(outfile, "%i %f %f\n", i, array[i].r, array[i].i);
+    }
+
+    fclose(outfile);
+}
 
 kiss_fft_scalar ** filterbank(kiss_fft_scalar * time_data_in, kiss_fft_scalar ** filterbank,
                               unsigned int N, unsigned int sampling_rate){
@@ -589,7 +624,7 @@ kiss_fft_scalar ** filterbank(kiss_fft_scalar * time_data_in, kiss_fft_scalar **
     // Take FFT of input time domain data
     kiss_fftr(fft_cfg, time_data_in, freq_data_in);
 
-    for (i = 0; i < 5; i++) {
+    for (i = 0; i < 6; i++) {
         for (j = 0; j < N; j++) {
             freq_data_out[j].r = 0.0;
             freq_data_out[j].i = 0.0;
@@ -627,36 +662,46 @@ kiss_fft_scalar * hanning_window(kiss_fft_scalar * data_in, unsigned int N, unsi
     kiss_fftr_cfg fft_data_cfg = kiss_fftr_alloc(N, 0, NULL, NULL);
     kiss_fftr_cfg fft_data_inv_cfg = kiss_fftr_alloc(N, 1, NULL, NULL);
     kiss_fft_scalar *hanning_in;
-    kiss_fft_cpx *hanning_out, *data_out;
+    kiss_fft_cpx *hanning_out, *data_out, *temp_data;
     hanning_in = (kiss_fft_scalar *) malloc(N*sizeof(kiss_fft_scalar));
     hanning_out = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
     data_out = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
+    temp_data = (kiss_fft_cpx *) malloc(N*sizeof(kiss_fft_cpx));
 
     int hann_len = .2*sampling_rate;
 
     int i;
     for (i = 0; i < N; i++) {
-        if (i < hann_len)
-            hanning_in[i] = pow(cos(2*i*M_PI/hann_len),2);
-        else
+        if (i < hann_len) {
+            hanning_in[i] = pow(cos(2 * i * M_PI / hann_len), 2);
+            //data_in[i] *= pow(cos(2*i*M_PI/hann_len),2);
+        } else
             hanning_in[i] = 0.0;
         hanning_out[i].r = 0.0;
         hanning_out[i].i = 0.0;
     }
+    hanning_in[0] = 0.0;
 
     kiss_fftr(fft_window_cfg, hanning_in, hanning_out);
     kiss_fftr(fft_data_cfg, data_in, data_out);
 
+    /*char * plot_filename = NULL;
+    plot_filename = (char *) malloc(100 * sizeof(char));
+    snprintf(plot_filename, 100, "data/dataout.dat", i);
+    plot_complex(plot_filename, data_out, N, sampling_rate);*/
+
+
     for (i = 0; i < N; i++) {
-        data_out[i].r *= hanning_out[i].r;
-        data_out[i].i *= hanning_out[i].i;
+        temp_data[i].r = data_out[i].r * hanning_out[i].r - data_out[i].i * hanning_out[i].i;
+        temp_data[i].i = data_out[i].i * hanning_out[i].r + data_out[i].r * hanning_out[i].i;
     }
 
-    kiss_fftri(fft_data_inv_cfg, data_out, data_in);
+    kiss_fftri(fft_data_inv_cfg, temp_data, data_in);
 
     free(hanning_in);
     free(hanning_out);
     free(data_out);
+    free(temp_data);
     kiss_fft_cleanup();
 
     return data_in;
@@ -714,8 +759,8 @@ kiss_fft_scalar * differentiator(kiss_fft_scalar * input_buffer, unsigned int N)
 }
 
 double * comb_filter_convolution(kiss_fft_scalar * data_input, double * energy,
-                               unsigned int N, unsigned int sample_rate, float resolution,
-                               int minbpm, int maxbpm, int high_limit) {
+                                 unsigned int N, unsigned int sample_rate, float resolution,
+                                 int minbpm, int maxbpm, int high_limit) {
     /*
      * Convolves the FFT of the data_input of size N with an impulse train
      * with a periodicity relative to the bpm in the range of minbpm to maxbpm.
@@ -725,30 +770,33 @@ double * comb_filter_convolution(kiss_fft_scalar * data_input, double * energy,
     kiss_fftr_cfg fft_cfg_filter = kiss_fftr_alloc(N, 0, NULL, NULL);
     kiss_fftr_cfg fft_cfg_data = kiss_fftr_alloc(N, 0, NULL, NULL);
 
-    kiss_fft_scalar *filter_input, *filter_abs, *data_abs;
+    kiss_fft_scalar *filter_input;
     filter_input = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
-    filter_abs = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
-    data_abs = (kiss_fft_scalar *) malloc(N * sizeof(kiss_fft_cpx));
 
     kiss_fft_cpx *filter_output, *data_output;
     filter_output = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
     data_output = (kiss_fft_cpx *) malloc(N * sizeof(kiss_fft_cpx));
 
     kiss_fftr(fft_cfg_data, data_input, data_output);
-    data_abs = absolute_value(data_output, data_abs, N);
 
     int id;
     float i;
     unsigned int j, ti;
+    double temp_energy_r, temp_energy_i;
     unsigned int bpm_range = maxbpm - minbpm;
+
+    float a;
+
+    char * plot_filename = NULL;
+    plot_filename = (char *) malloc(100 * sizeof(char));
 
     for (i = 0; i < bpm_range; (i+=resolution)) {
 
         // Ti is the period of impulses (samples per beat)
-        ti = (double)60/(minbpm + i)*sample_rate;
-        //printf("ti: %i; bpm: %f\n", ti, (minbpm+i));
+        ti = floor((double)60/(minbpm+i) * sample_rate);
 
         for (j = 0; j < N; j++) {
+
             if (j%ti == 0) {
                 filter_input[j] = (kiss_fft_scalar) high_limit;
                 //printf("%f, %u, %u \n", i, j, ti);
@@ -759,22 +807,29 @@ double * comb_filter_convolution(kiss_fft_scalar * data_input, double * energy,
 
         kiss_fftr(fft_cfg_filter, filter_input, filter_output);
 
-        filter_abs = absolute_value(filter_output, filter_abs, N);
-
-        id = i/resolution;
-
-        for (j = 0; j < N/2; j++) {
-            energy[id] += filter_abs[j] * data_abs[j];
+        if (p==1 && i == 68) {
+            snprintf(plot_filename, 100, "data/comb.dat");
+            plot(plot_filename, filter_input, filter_input, N, sample_rate);
         }
+
+        id = floor(i/resolution);
+
+        for (j = 0; j < N; j++) {
+            a = pow(.5, j/ti);
+            a *= (60+.1*i)/maxbpm;
+            temp_energy_r = (filter_output[j].r * data_output[j].r - filter_output[j].i * data_output[j].i);
+            temp_energy_i = (filter_output[j].r * data_output[j].i + filter_output[j].i * data_output[j].r);
+
+            energy[id] += pow(pow(temp_energy_i, 2) + pow(temp_energy_r, 2), .5)*a;
+        }
+
 
         //printf("Energy of bpm %f is %f\n", (minbpm+i), energy[id]);
     }
 
     free(filter_input);
     free(filter_output);
-    free(filter_abs);
     free(data_output);
-    free(data_abs);
     kiss_fft_cleanup();
 
     return energy;
@@ -824,14 +879,14 @@ int max_array(double * array, int size) {
             index = i;
         }
     }
-    //printf("Max value at %i is %f\n", index, max);
+    printf("Max value at %i is %f\n", index, max);
     if (max == 0.0) return -1;
     else return index;
 }
 
 int most_frequent_bpm(int * map) {
     int i, winner=0, value=0;
-    for (i=60; i<200; i++) {
+    for (i=0; i<200; i++) {
         if (map[i] > value) {
             winner = i;
             value = map[winner];
@@ -845,16 +900,7 @@ void dump_map(int * map) {
     for (i = 0; i < 200; i++) {
         printf("BPM: %i, Count: %i\n", i, map[i]);
     }
-}
 
-void plot_map(int * map) {
-  int i;
-  FILE *gnuplot = popen("gnuplot", "w");
-  fprintf(gnuplot, "plot '-'\n");
-  for (i = 0; i < 200; i++)
-    fprintf(gnuplot, "%g %g\n", i, map[i]);
-  fprintf(gnuplot, "e\n");
-  fflush(gnuplot);
 }
 
 void sanitize_map(int * map) {
