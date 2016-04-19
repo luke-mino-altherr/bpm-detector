@@ -28,9 +28,10 @@ int main(int argc, char ** argv) {
     start = clock();
 
     // Get file path.
-    if ( argc != 2 ) /* argc should be 2 for correct execution */
+    if ( argc < 2 ) /* argc should be 2 for correct execution */
     {
-        printf( "usage: %s relative filename", argv[0] );
+        printf("usage: %s relative filename\n", argv[0]);
+        return -1;
     }
 
     char * filename = NULL;
@@ -212,7 +213,9 @@ int main(int argc, char ** argv) {
     // Number of samples to analyze. We are taking 4 seconds of data.
     unsigned int N = 4 * wave->sample_rate;
     if (N % 2 != 0) N += 1;
-    int loops = floor(num_samples / N);
+    int loops;
+    if (arc > 2) loops = argv[2];
+    else loops = floor(num_samples / N);
     printf("loops is %i\n", loops);
 
     // Temporarily hold data from file

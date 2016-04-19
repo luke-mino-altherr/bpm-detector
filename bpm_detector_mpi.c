@@ -32,7 +32,7 @@ int main(int argc, char ** argv) {
                               MPI_UNSIGNED, MPI_UNSIGNED, MPI_UNSIGNED, MPI_UNSIGNED,
                               MPI_UNSIGNED, MPI_UNSIGNED, MPI_UNSIGNED, MPI_UNSIGNED_CHAR,
                               MPI_UNSIGNED};
-    int blocklen[13] = { 4, 1, 4, 4, 1, 1, 1, 1, 1, 1, 1, 4, 1};
+    int blocklen[13] = {4, 1, 4, 4, 1, 1, 1, 1, 1, 1, 1, 4, 1};
     MPI_Aint disp[13];
 
     // Initialize MPI environment
@@ -46,9 +46,9 @@ int main(int argc, char ** argv) {
     start_time = clock();
 
     // Get file path.
-    if (argc != 2) /* argc should be 2 for correct execution */
+    if (argc < 2) /* argc should be 2 for correct execution */
     {
-        printf("usage: %s relative filename", argv[0]);
+        printf("usage: %s relative filename\n", argv[0]);
         MPI_Finalize();
         return -1;
     }
@@ -234,7 +234,10 @@ int main(int argc, char ** argv) {
     // Number of samples to analyze. We are taking 4 seconds of data.
     unsigned int N = 4 * wave->sample_rate;
     if (N % 2 != 0) N += 1;
-    int loops = floor(num_samples / N);
+    int loops;
+    if (arc > 2) loops = argv[2];
+    else loops = floor(num_samples / N);
+    printf("loops is %i\n", loops);
 
     int minbpm = 60;
     int maxbpm = 180;
