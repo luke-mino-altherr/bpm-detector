@@ -214,7 +214,7 @@ int main(int argc, char ** argv) {
     unsigned int N = 4 * wave->sample_rate;
     if (N % 2 != 0) N += 1;
     int loops;
-    if (arc > 2) loops = argv[2];
+    if (argc > 2) loops = atoi(argv[2]);
     else loops = floor(num_samples / N);
     printf("loops is %i\n", loops);
 
@@ -367,19 +367,19 @@ int main(int argc, char ** argv) {
         current_bpm = compute_bpm(energy, bpm_range, minbpm, resolution);
 
         if (current_bpm != -1) {
-            printf("BPM computation is: %f\n", current_bpm);
+	  //printf("BPM computation is: %f\n", current_bpm);
             frequency_map[(int) round(current_bpm)] += 1;
         }
 
-        printf("Current BPM winner is: %i\n", most_frequent_bpm(frequency_map));
+        //printf("Current BPM winner is: %i\n", most_frequent_bpm(frequency_map));
 
     }
 
     winning_bpm = most_frequent_bpm(frequency_map);
     printf("BPM winner is: %i\n", winning_bpm);
 
-    printf("\nDumping map...\n\n");
-    dump_map(frequency_map);
+    //printf("\nDumping map...\n\n");
+    //dump_map(frequency_map);
 
     for (i = 0; i < num_sub_bands; i++) {
         free(sub_band_input_ch1[i]);
@@ -733,7 +733,7 @@ int max_array(double * array, int size) {
             index = i;
         }
     }
-    printf("Max value at %i is %f\n", index, max);
+    //printf("Max value at %i is %f\n", index, max);
     if (max == 0.0) return -1;
     else return index;
 }

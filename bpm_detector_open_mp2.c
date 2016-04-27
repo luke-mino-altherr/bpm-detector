@@ -19,14 +19,6 @@ unsigned char buffer2[2];
 
 FILE *ptr;
 
-char *temp_data_buffer;
-double *energy;
-kiss_fft_scalar *data;
-kiss_fft_scalar **sub_band_input_ch1, **sub_band_input_ch2;
-kiss_fft_scalar *fft_input_ch1, *fft_input_ch2;
-
-#pragma omp threadprivate(temp_data_buffer, energy, data, sub_band_input_ch1, sub_band_input_ch2, fft_input_ch1, fft_input_ch2)
-
 int main(int argc, char ** argv) {
     //Start timing code
     clock_t start, end;
@@ -221,7 +213,7 @@ int main(int argc, char ** argv) {
     unsigned int N = 4 * wave->sample_rate;
     if (N % 2 != 0) N += 1;
     int loops;
-    if (arc > 2) loops = argv[2];
+    if (argc > 2) loops = atoi(argv[2]);
     else loops = floor(num_samples / N);
     printf("loops is %i\n", loops);
 
@@ -238,7 +230,11 @@ int main(int argc, char ** argv) {
     int num_sub_bands = 6;
     unsigned int sub_band_size = N / num_sub_bands;
 
-    omp_set_num_threads(loops/2);
+    char *temp_data_buffer;
+    double *energy;
+    kiss_fft_scalar *data;
+    kiss_fft_scalar **sub_band_input_ch1, **sub_band_input_ch2;
+    kiss_fft_scalar *fft_input_ch1, *fft_input_ch2;
 
     // Temporarily hold data from file
     temp_data_buffer = (char *) malloc(bytes_in_each_channel * sizeof(char));
@@ -270,7 +266,7 @@ int main(int argc, char ** argv) {
         for (i = 0; i < N; i++) {
             // Loop for left and right channels
             for (k = 0; k < 2; k++) {
-                read = fread(temp_data_buffer, sizeof(temp_data_buffer), 1, ptr);
+                read = fread(temp_data_buffer, bytes_in_each_channel, 1, ptr);
 
                 switch (bytes_in_each_channel) {
                     case 4:
@@ -465,10 +461,10 @@ kiss_fft_scalar * hanning_window(kiss_fft_scalar * data_in, unsigned int N, unsi
     int hann_len = .2 * sampling_rate;
 
     int i;
-#pragma omp parallel
+    #pragma omp parallel
     {
 
-#pragma omp for
+    #pragma omp for
     for (i = 0; i < N; i++) {
         if (i < hann_len)
             hanning_in[i] = pow(cos(2 * i * M_PI / hann_len), 2);
@@ -482,12 +478,12 @@ kiss_fft_scalar * hanning_window(kiss_fft_scalar * data_in, unsigned int N, unsi
     kiss_fftr(fft_window_cfg, hanning_in, hanning_out);
     kiss_fftr(fft_data_cfg, data_in, data_out);
 
-#pragma omp for
+    #pragma omp for
     for (i = 0; i < N; i++) {
         temp_data[i].r = data_out[i].r * hanning_out[i].r - data_out[i].i * hanning_out[i].i;
         temp_data[i].i = data_out[i].i * hanning_out[i].r + data_out[i].r * hanning_out[i].i;
     }
-}
+    }
 
     kiss_fftri(fft_data_inv_cfg, data_out, data_in);
 
@@ -505,7 +501,7 @@ kiss_fft_scalar * full_wave_rectifier(kiss_fft_scalar * input_buffer, unsigned i
      * Rectifies a signal in the time domain.
      */
     int i;
-#pragma omp parallel for
+    #pragma omp parallel for
     for (i = 1; i < N; i++) {
         if (input_buffer[i] < 0.0)
             input_buffer[i] *= -1.0;
@@ -520,7 +516,7 @@ kiss_fft_scalar * half_wave_rectifier(kiss_fft_scalar * input_buffer, unsigned i
      */
     int i;
 
-#pragma omp parallel for
+    #pragma omp parallel for
     for (i = 1; i < N; i++) {
         if (input_buffer[i] < 0.0)
             input_buffer[i] = 0.0;
@@ -543,7 +539,7 @@ kiss_fft_scalar * differentiator(kiss_fft_scalar * input_buffer, unsigned int N)
         output[i] = input_buffer[i] - input_buffer[i-1];
     }
 
-#pragma omp parallel for
+    #pragma omp parallel for
     for (i = 0; i < N; i++) {
         input_buffer[i] = output[i];
     }
@@ -573,7 +569,6 @@ double * comb_filter_convolution(kiss_fft_scalar * data_input, double * energy,
     fft_cfg_data = kiss_fftr_alloc(N, 0, NULL, NULL);
 
     kiss_fftr(fft_cfg_data, data_input, data_output);
-    data_abs = absolute_value(data_output, data_abs, N);
 
     int id;
     float i, a;
@@ -586,7 +581,7 @@ double * comb_filter_convolution(kiss_fft_scalar * data_input, double * energy,
         // Ti is the period of impulses (samples per beat)
         ti = (double)60/(minbpm + i)*sample_rate;
 
-#pragma omp parallel for
+	#pragma omp parallel for
         for (j = 0; j < N; j++) {
             if (j%ti == 0) {
                 filter_input[j] = (kiss_fft_scalar) high_limit;
@@ -599,7 +594,7 @@ double * comb_filter_convolution(kiss_fft_scalar * data_input, double * energy,
 
         id = i/resolution;
 
-#pragma omp parallel for
+	#pragma omp parallel for
         for (j = 0; j < N/2; j++) {
             a = pow(.5, j/ti);
             a *= (60+.1*i)/maxbpm;
@@ -644,7 +639,7 @@ double * clear_energy_buffer(double * energy_buffer, unsigned int bpm_range, flo
 kiss_fft_scalar * absolute_value(kiss_fft_cpx * input, kiss_fft_scalar * output, unsigned int N) {
     unsigned int i;
 
-#pragma omp parallel for
+    #pragma omp parallel for
     for (i = 0; i < N; i++) {
         output[i] = pow(pow(input[i].r, 2) + pow(input[i].i ,2), .5);
     }

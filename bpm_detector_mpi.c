@@ -19,6 +19,8 @@ unsigned char buffer2[2];
 
 FILE *ptr;
 
+int p = 0;
+
 int main(int argc, char ** argv) {
     //Start timing code
     clock_t start_time, end_time;
@@ -235,9 +237,8 @@ int main(int argc, char ** argv) {
     unsigned int N = 4 * wave->sample_rate;
     if (N % 2 != 0) N += 1;
     int loops;
-    if (arc > 2) loops = argv[2];
+    if (argc > 2) loops = atoi(argv[2]);
     else loops = floor(num_samples / N);
-    printf("loops is %i\n", loops);
 
     int minbpm = 60;
     int maxbpm = 180;
@@ -286,7 +287,7 @@ int main(int argc, char ** argv) {
             for (i = 0; i < N; i++) {
                 // Loop for left and right channels
                 for (k = 0; k < 2; k++) {
-                    read = fread(temp_data_buffer, sizeof(temp_data_buffer), 1, ptr);
+                    read = fread(temp_data_buffer, bytes_in_each_channel, 1, ptr);
 
                     switch (bytes_in_each_channel) {
                         case 4:
@@ -329,8 +330,8 @@ int main(int argc, char ** argv) {
         winning_bpm = most_frequent_bpm(frequency_map);
         printf("BPM winner is: %i\n", winning_bpm);
 
-        printf("\nDumping map...\n\n");
-        dump_map(frequency_map);
+	//        printf("\nDumping map...\n\n");
+        //dump_map(frequency_map);
 
         free(frequency_map);
     }
@@ -882,7 +883,7 @@ int max_array(double * array, int size) {
             index = i;
         }
     }
-    printf("Max value at %i is %f\n", index, max);
+    //printf("Max value at %i is %f\n", index, max);
     if (max == 0.0) return -1;
     else return index;
 }

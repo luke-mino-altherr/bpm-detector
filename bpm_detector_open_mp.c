@@ -36,7 +36,7 @@ int main(int argc, char ** argv) {
     // Get file path.
     if ( argc < 2 ) /* argc should be 2 for correct execution */
     {
-        printf( "usage: %s relative filename\n", argv[0] );
+        printf( "usage: %s relative_filename number_of_loops \n", argv[0] );
         return -1;
     }
 
@@ -221,7 +221,7 @@ int main(int argc, char ** argv) {
     unsigned int N = 4 * wave->sample_rate;
     if (N % 2 != 0) N += 1;
     int loops;
-    if (arc > 2) loops = argv[2];
+    if (argc > 2) loops = atoi(argv[2]);
     else loops = floor(num_samples / N);
     printf("loops is %i\n", loops);
 
@@ -237,8 +237,6 @@ int main(int argc, char ** argv) {
 
     int num_sub_bands = 6;
     unsigned int sub_band_size = N / num_sub_bands;
-
-    omp_set_num_threads(loops/2);
 
 #pragma omp parallel private(i, k, current_bpm)
     {
@@ -277,7 +275,7 @@ int main(int argc, char ** argv) {
             for (i = 0; i < N; i++) {
                 // Loop for left and right channels
                 for (k = 0; k < 2; k++) {
-                    read = fread(temp_data_buffer, sizeof(temp_data_buffer), 1, ptr);
+                    read = fread(temp_data_buffer, bytes_in_each_channel, 1, ptr);
 
                     switch (bytes_in_each_channel) {
                         case 4:
@@ -314,33 +312,36 @@ int main(int argc, char ** argv) {
 
             // Filter and sum energy for each tested bpm for each subband
             for (i = 0; i < num_sub_bands; i++) {
-                // Channel 1
-                sub_band_input_ch1[i] = full_wave_rectifier(sub_band_input_ch1[i], N);
-                sub_band_input_ch1[i] = hanning_window(sub_band_input_ch1[i], N, wave->sample_rate);
-                sub_band_input_ch1[i] = differentiator(sub_band_input_ch1[i], N);
-                sub_band_input_ch1[i] = half_wave_rectifier(sub_band_input_ch1[i], N);
-                energy = comb_filter_convolution(sub_band_input_ch1[i], energy, N, wave->sample_rate,
-                                                 1, minbpm, maxbpm, high_limit);
 
-                // Channel 2
-                sub_band_input_ch2[i] = full_wave_rectifier(sub_band_input_ch2[i], N);
+                sub_band_input_ch1[i] = full_wave_rectifier(sub_band_input_ch1[i], N);
+		sub_band_input_ch2[i] = full_wave_rectifier(sub_band_input_ch2[i], N);                
+		
+		sub_band_input_ch1[i] = hanning_window(sub_band_input_ch1[i], N, wave->sample_rate);
                 sub_band_input_ch2[i] = hanning_window(sub_band_input_ch2[i], N, wave->sample_rate);
-                sub_band_input_ch2[i] = differentiator(sub_band_input_ch2[i], N);
-                sub_band_input_ch2[i] = half_wave_rectifier(sub_band_input_ch2[i], N);
+
+		sub_band_input_ch1[i] = differentiator(sub_band_input_ch1[i], N);
+                sub_band_input_ch2[i] = differentiator(sub_band_input_ch2[i], N);                
+
+		sub_band_input_ch1[i] = half_wave_rectifier(sub_band_input_ch1[i], N);
+                sub_band_input_ch2[i] = half_wave_rectifier(sub_band_input_ch2[i], N);                
+
+		energy = comb_filter_convolution(sub_band_input_ch1[i], energy, N, wave->sample_rate,
+                                                 1, minbpm, maxbpm, high_limit);
                 energy = comb_filter_convolution(sub_band_input_ch2[i], energy, N, wave->sample_rate,
                                                  1, minbpm, maxbpm, high_limit);
+
             }
 
             // Calculate the bpm from the total energy
             current_bpm = compute_bpm(energy, bpm_range, minbpm, resolution);
 
             if (current_bpm != -1) {
-                printf("BPM computation is: %f\n", current_bpm);
+	      //printf("BPM computation is: %f\n", current_bpm);
 #pragma omp atomic
                 frequency_map[(int) round(current_bpm)] += 1;
             }
 
-            printf("Current BPM winner is: %i\n", most_frequent_bpm(frequency_map));
+            //printf("Current BPM winner is: %i\n", most_frequent_bpm(frequency_map));
 
         }
 
@@ -359,8 +360,8 @@ int main(int argc, char ** argv) {
     winning_bpm = most_frequent_bpm(frequency_map);
     printf("BPM winner is: %i\n", winning_bpm);
 
-    printf("\nDumping map...\n\n");
-    dump_map(frequency_map);
+    //printf("\nDumping map...\n\n");
+    //dump_map(frequency_map);
 
     if (ptr) {
         printf("Closing file..\n");
@@ -584,7 +585,6 @@ double * comb_filter_convolution(kiss_fft_scalar * data_input, double * energy,
     }
 
     kiss_fftr(fft_cfg_data, data_input, data_output);
-    data_abs = absolute_value(data_output, data_abs, N);
 
     int id;
     float i, a;
@@ -615,7 +615,8 @@ double * comb_filter_convolution(kiss_fft_scalar * data_input, double * energy,
             temp_energy_r = (filter_output[j].r * data_output[j].r - filter_output[j].i * data_output[j].i);
             temp_energy_i = (filter_output[j].r * data_output[j].i + filter_output[j].i * data_output[j].r);
 
-            energy[id] += pow(pow(temp_energy_i, 2) + pow(temp_energy_r, 2), .5)*a;
+            #pragma omp atomic
+	    energy[id] += pow(pow(temp_energy_i, 2) + pow(temp_energy_r, 2), .5)*a;
         }
 
         //printf("Energy of bpm %f is %f\n", (minbpm+i), energy[id]);
@@ -673,7 +674,7 @@ int max_array(double * array, int size) {
             index = i;
         }
     }
-    printf("Max value at %i is %f\n", index, max);
+    //printf("Max value at %i is %f\n", index, max);
     if (max == 0.0) return -1;
     else return index;
 }
