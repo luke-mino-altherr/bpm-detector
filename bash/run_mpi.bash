@@ -2,11 +2,11 @@
 #BSUB -J BpmDetector-MPI
 #BSUB -o output_file_mpi
 #BSUB -e error_file_mpi
-#BSUB -n 10
-#BSUB -q ht-10g
-#BSUB cwd /home/<INSERT USERNAME>/bpmDetector
+#BSUB -n 56
+#BSUB -q ser-par-10g
+#BSUB cwd /home/<insert_username>/bpm-detector
 
-work=/home/<INSERT USERNAME>/bpmDetector
+work=/home/<insert_username>/bpm-detector
 cd $work
 tempfile1=hostlistrun
 tempfile2=hostlist-tcp
@@ -20,5 +20,9 @@ for ((i=0; i<${#hosts[@]}; i += 2)) ;
    echo $HOST:$CORE >> $tempfile2
 done
 
-mpirun -np 60 -prot -TCP -lsf ./bin/bpm-detector-mpi <INSERT RELATIVE PATH TO AUDIO FILE>
-
+mpirun -np 56 -prot -TCP -lsf ./bin/bpm-detector-mpi <relative_path_to_audio_file> 1
+mpirun -np 56 -prot -TCP -lsf ./bin/bpm-detector-mpi <relative_path_to_audio_file> 5
+mpirun -np 56 -prot -TCP -lsf ./bin/bpm-detector-mpi <relative_path_to_audio_file> 10
+mpirun -np 56 -prot -TCP -lsf ./bin/bpm-detector-mpi <relative_path_to_audio_file> 20
+mpirun -np 56 -prot -TCP -lsf ./bin/bpm-detector-mpi <relative_path_to_audio_file> 30
+mpirun -np 56 -prot -TCP -lsf ./bin/bpm-detector-mpi <relative_path_to_audio_file> 
