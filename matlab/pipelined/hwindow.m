@@ -1,4 +1,4 @@
-function output = hwindow(sig, winlength, bandlimits, maxfreq)
+function output = hwindow(sig, fs)
 
 % HWINDOW rectifies a signal, then convolves it with a half Hanning
 % window.
@@ -24,10 +24,9 @@ function output = hwindow(sig, winlength, bandlimits, maxfreq)
 %     This is the second step of the beat detection sequence.
 %
 %     See also FILTERBANK, DIFFRECT, and TIMECOMB
-  
-  if nargin < 2, winlength = .4; end  
-  if nargin < 3, bandlimits = [0 200 400 800 1600 3200]; end
-  if nargin < 4, maxfreq = 4096; end
+  winlength = .2;
+  bandlimits = [0 200 400 800 1600 3200];
+  maxfreq = fs/2;
   
   n = length(sig);
   nbands = length(bandlimits);

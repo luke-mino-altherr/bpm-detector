@@ -1,4 +1,4 @@
-function output = timecomb(sig, acc, minbpm, maxbpm, bandlimits, maxfreq)
+function output = timecomb(sig, acc, minbpm, maxbpm, fs)
 
 % TIMECOMB finds the tempo of a musical signal, divided into
 % frequency bands.
@@ -29,8 +29,8 @@ function output = timecomb(sig, acc, minbpm, maxbpm, bandlimits, maxfreq)
   if nargin < 2, acc = 1; end 
   if nargin < 3, minbpm = 60; end
   if nargin < 4, maxbpm = 240; end
-  if nargin < 5, bandlimits = [0 200 400 800 1600 3200]; end
-  if nargin < 6, maxfreq = 4096; end
+  bandlimits = [0 200 400 800 1600 3200];
+  maxfreq = fs/2;
 
 
   n=length(sig);
@@ -62,10 +62,6 @@ function output = timecomb(sig, acc, minbpm, maxbpm, bandlimits, maxfreq)
     % certain tempo
     
     nstep = floor(120/bpm*maxfreq);
-    
-    % Print the progress
-    
-    percent_done  = 100*(bpm-minbpm)/(maxbpm-minbpm)
     
     % Set every nstep samples of the filter to one
     

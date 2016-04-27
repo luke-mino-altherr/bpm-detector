@@ -1,4 +1,4 @@
-function output=diffrect(sig,nbands) 
+function output=diffrect(sig, nbands) 
 
 % DIFFRECT differentiates a signal, then half-wave rectifies the
 % result. 

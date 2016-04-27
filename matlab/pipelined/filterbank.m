@@ -1,4 +1,4 @@
-function output = filterbank(sig, bandlimits, maxfreq)
+function output = filterbank(sig, fs)
 
 % FILTERBANK divides a time domain signal into individual frequency
 % bands.
@@ -19,8 +19,8 @@ function output = filterbank(sig, bandlimits, maxfreq)
 %
 %     See also HWINDOW, DIFFRECT, and TIMECOMB
 
-  if nargin < 2, bandlimits=[0 200 400 800 1600 3200]; end
-  if nargin < 3, maxfreq=4096; end
+  bandlimits=[0 200 400 800 1600 3200];
+  maxfreq = fs/2;
 
   dft = fft(sig);
 
