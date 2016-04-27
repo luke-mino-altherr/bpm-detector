@@ -51,7 +51,9 @@ There are two versions of the Matlab versions of `bpm-detector`, both residing i
 To run the Matlab version on Northeastern's discovery cluster, use the `run_matlab_ser.bash` or `run_matlab_pipeline.bash` script in the `bash/` directory. First, you must edit the bash script to include youre username and relative path of the audio file to test. Then run the following command:
 
     $ bsub < bash/run_matlab_ser.bash
+
 or 
+
     $ bsub < bash/run_matlab_pipeline.bash 
 
 
